@@ -169,6 +169,21 @@ function createSfx() {
       setTimeout(() => beep(220, 0.2, "sine", 0.05), 70);
       setTimeout(() => beep(90, 0.35, "triangle", 0.04), 160);
     },
+    foghorn() {
+      const audio = ensure();
+      const osc = audio.createOscillator();
+      const amp = audio.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(78, audio.currentTime);
+      osc.frequency.linearRampToValueAtTime(52, audio.currentTime + 0.7);
+      amp.gain.setValueAtTime(0.09, audio.currentTime);
+      amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.85);
+      osc.connect(amp);
+      amp.connect(audio.destination);
+      osc.start();
+      osc.stop(audio.currentTime + 0.9);
+      setTimeout(() => beep(64, 0.35, "sine", 0.05), 220);
+    },
   };
 }
 
@@ -423,6 +438,88 @@ function buildStars() {
   return stars;
 }
 
+function buildWhale() {
+  const whale = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0x6d8aa3, roughness: 0.62 });
+  const belly = new THREE.MeshStandardMaterial({ color: 0xd8dee4, roughness: 0.72 });
+  const tie = new THREE.MeshStandardMaterial({ color: 0xc43b2a, roughness: 0.38 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.35 });
+  const leather = new THREE.MeshStandardMaterial({ color: 0x4a2c14, roughness: 0.5 });
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1.35, 12, 10), skin);
+  body.scale.set(2.3, 1, 1);
+  body.castShadow = true;
+  whale.add(body);
+
+  const underside = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), belly);
+  underside.scale.set(2.05, 0.68, 0.68);
+  underside.position.y = -0.28;
+  whale.add(underside);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.82, 10, 8), skin);
+  head.position.set(2.15, 0.12, 0);
+  head.castShadow = true;
+  whale.add(head);
+
+  for (const side of [-1, 1]) {
+    const lens = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.03, 6, 12), dark);
+    lens.position.set(2.62, 0.28, 0.26 * side);
+    lens.rotation.y = Math.PI / 2;
+    whale.add(lens);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.1, 0.45), skin);
+    fin.position.set(0.2, -0.35, 1.05 * side);
+    fin.rotation.z = 0.25;
+    fin.rotation.y = 0.35 * side;
+    whale.add(fin);
+  }
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.2), dark);
+  bridge.position.set(2.62, 0.28, 0);
+  whale.add(bridge);
+
+  const knot = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.2, 0.2), tie);
+  knot.position.set(2.1, -0.52, 0);
+  whale.add(knot);
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.95, 0.08), tie);
+  blade.position.set(2.1, -1.08, 0);
+  whale.add(blade);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.22, 4), tie);
+  tip.position.set(2.1, -1.64, 0);
+  tip.rotation.x = Math.PI;
+  whale.add(tip);
+
+  const tail = new THREE.Group();
+  tail.position.set(-2.7, 0.12, 0);
+  const fluke = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.12, 1.15), skin);
+  fluke.position.set(-0.15, 0, 0.58);
+  tail.add(fluke);
+  const fluke2 = fluke.clone();
+  fluke2.position.z = -0.58;
+  tail.add(fluke2);
+  whale.add(tail);
+  whale.userData.tail = tail;
+
+  const briefcase = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.4, 0.14), leather);
+  briefcase.position.set(0.35, -1.2, 0.9);
+  whale.add(briefcase);
+
+  whale.scale.setScalar(1.05);
+  return whale;
+}
+
+function buildCertificate() {
+  const cert = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, 0.02, 0.64),
+    new THREE.MeshStandardMaterial({ color: 0xfff4dc, roughness: 0.8 })
+  );
+  const seal = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.03, 10),
+    new THREE.MeshStandardMaterial({ color: 0xc43b2a, roughness: 0.4 })
+  );
+  seal.position.set(0.28, 0.02, -0.16);
+  cert.add(seal);
+  return cert;
+}
+
 class Game {
   constructor() {
     this.state = loadSave();
@@ -455,6 +552,10 @@ class Game {
     this.fartTime = 0;
     this.fartEmit = 0;
     this.spaceDeath = false;
+    this.whale = null;
+    this.whaleTime = 0;
+    this.whalePaused = false;
+    this.certificate = null;
   }
 
   async start() {
@@ -567,14 +668,20 @@ class Game {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     window.addEventListener("keydown", (event) => {
+      const key = (event.key || "").toLowerCase();
       if (event.code === "Escape") this.closeShop();
-      if (event.code === "KeyS") this.openShop();
-      if (event.code === "KeyG") {
+      if (key === "s") this.openShop();
+      if (key === "g") {
         event.preventDefault();
         if (!event.repeat) this.fartLaunch();
         return;
       }
-      if (event.code !== "Space") return;
+      if (key === "w") {
+        event.preventDefault();
+        if (!event.repeat) this.summonWhale();
+        return;
+      }
+      if (event.code !== "Space" && key !== " ") return;
       event.preventDefault();
       if (event.repeat || this.blocked || this.exploding || this.farting) return;
       if (this.airborne) {
@@ -810,6 +917,89 @@ class Game {
     this.respawnTimer = 2.3;
   }
 
+  summonWhale() {
+    if (!this.ready || this.whale) return;
+    this.whale = buildWhale();
+    this.whale.scale.setScalar(1.45);
+    this.whale.position.set(-8.5, 4.6, -1.2);
+    this.whale.rotation.y = -0.55;
+    this.scene.add(this.whale);
+    this.whaleTime = 0;
+    this.whalePaused = false;
+    this.sfx.foghorn();
+    ui.combo.hidden = false;
+    ui.combo.classList.add("whale");
+    ui.combo.textContent = "A WHALE";
+    ui.payout.hidden = false;
+    ui.payout.textContent = "here on business";
+    this.flashTimer = 14;
+    ui.hint.textContent = "Do not make eye contact. It has a briefcase.";
+    this.say("A whale in spectacles has arrived for the quarterly review.");
+  }
+
+  dropCertificate() {
+    if (this.certificate) this.scene.remove(this.certificate);
+    this.certificate = buildCertificate();
+    this.certificate.position.set(0.2, 6.4, 0.2);
+    this.certificate.userData.v = new THREE.Vector3((Math.random() - 0.5) * 0.4, 0, (Math.random() - 0.5) * 0.4);
+    this.certificate.userData.life = 6;
+    this.scene.add(this.certificate);
+  }
+
+  updateWhale(dt) {
+    if (this.certificate) {
+      if (this.certificate.position.y > 0.7) {
+        this.certificate.userData.v.y -= 14 * dt;
+        this.certificate.position.addScaledVector(this.certificate.userData.v, dt);
+        this.certificate.rotation.y += dt * 2.4;
+      } else {
+        this.certificate.position.y = 0.7;
+        this.certificate.rotation.x = 0;
+        this.certificate.userData.life -= dt;
+        if (this.certificate.userData.life <= 0) {
+          this.scene.remove(this.certificate);
+          this.certificate = null;
+        }
+      }
+    }
+
+    if (!this.whale) return;
+    this.whaleTime += dt;
+    this.whale.userData.tail.rotation.y = Math.sin(this.whaleTime * 4) * 0.35;
+    this.whale.position.y = 4.6 + Math.sin(this.whaleTime * 1.6) * 0.22;
+
+    if (!this.whalePaused && this.whale.position.x < 0) {
+      this.whale.position.x += 7.2 * dt;
+      if (this.whale.position.x >= 0) {
+        this.whale.position.x = 0;
+        this.whalePaused = true;
+        this.whaleTime = 0;
+        ui.combo.textContent = "QUARTERLY REVIEW";
+        ui.payout.textContent = "0 deliverables";
+        this.say("The whale nods, writes “satisfactory nothing,” and issues a certificate.");
+        this.dropCertificate();
+      }
+      return;
+    }
+
+    if (this.whalePaused && this.whaleTime < 2.1) return;
+
+    this.whale.position.x += 7.6 * dt;
+    if (this.whalePaused && this.whaleTime >= 2.1 && this.whaleTime < 2.3) {
+      ui.combo.textContent = "APPROVED";
+      ui.payout.textContent = "keep bouncing";
+    }
+    if (this.whale.position.x > 22) {
+      this.scene.remove(this.whale);
+      this.whale = null;
+      this.whalePaused = false;
+      ui.combo.classList.remove("whale");
+      ui.combo.hidden = true;
+      ui.payout.hidden = true;
+      ui.hint.textContent = "The whale has other pastures to audit. W to call it back.";
+    }
+  }
+
   burstCoins(count) {
     const gold = new THREE.MeshStandardMaterial({ color: 0xf3c43a, metalness: 0.55, roughness: 0.3 });
     for (let i = 0; i < count; i += 1) {
@@ -996,6 +1186,7 @@ class Game {
     this.updatePhysics(dt);
     this.updateCoins(dt);
     this.updateDebris(dt);
+    this.updateWhale(dt);
     this.updateUi(dt);
     const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.35 : 0;
     const shakeY = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.2 : 0;
@@ -1006,9 +1197,10 @@ class Game {
       this.camera.lookAt(0, 0.8 + this.height, 0);
       if (this.spaceDeath) this.tintSky(1);
     } else {
+      const lookY = this.whale ? 2.6 : 1.05 + this.height * 0.28;
       this.camera.position.x = 4.2 + shakeX;
-      this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.55 + this.height * 0.2, 0.08) + shakeY;
-      this.camera.lookAt(0, 1.05 + this.height * 0.28, 0);
+      this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, (this.whale ? 3.2 : 2.55) + this.height * 0.2, 0.08) + shakeY;
+      this.camera.lookAt(0, lookY, 0);
     }
     (this.scene.userData.clouds || []).forEach((cloud) => {
       cloud.position.x += cloud.userData.drift * dt;
@@ -1134,3 +1326,4 @@ ui.shopBtn.addEventListener("click", () => game.openShop());
 ui.closeShop.addEventListener("click", () => game.closeShop());
 ui.moneyBtn.addEventListener("click", () => game.doNothing());
 ui.useMoneyBtn.addEventListener("click", () => game.doNothing());
+$("whale-btn").addEventListener("click", () => game.summonWhale());

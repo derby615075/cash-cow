@@ -178,6 +178,11 @@ button:focus {
   text-shadow: 0 4px 0 #3d5a10, 0 0 18px rgba(198, 227, 74, 0.6);
 }
 
+.combo.whale {
+  color: #b7e3ff;
+  text-shadow: 0 4px 0 #1d4b68, 0 0 16px rgba(126, 200, 255, 0.55);
+}
+
 .payout.dead {
   color: #ff8b8b;
 }
@@ -234,6 +239,12 @@ button:focus {
   font-weight: 700;
   cursor: pointer;
   z-index: 3;
+}
+
+.use-money.whale-call {
+  left: 18px;
+  right: auto;
+  background: #b7e3ff;
 }
 
 .overlay {
@@ -422,6 +433,12 @@ h2 {
   }
 
   .use-money {
+    right: 18px;
+    left: auto;
+    bottom: 92px;
+  }
+
+  .whale-call {
     left: 18px;
     right: auto;
     bottom: 92px;
