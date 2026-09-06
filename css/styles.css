@@ -183,6 +183,12 @@ button:focus {
   text-shadow: 0 4px 0 #1d4b68, 0 0 16px rgba(126, 200, 255, 0.55);
 }
 
+.combo.griddy {
+  color: #ff4dd2;
+  text-shadow: 0 4px 0 #7a1060, 0 0 18px rgba(255, 77, 210, 0.65);
+  animation: griddy-pulse 0.42s ease-in-out infinite;
+}
+
 .payout.dead {
   color: #ff8b8b;
 }
@@ -425,6 +431,10 @@ h2 {
   25% { transform: translateX(-6px) rotate(-3deg); }
   50% { transform: translateX(6px) rotate(3deg); }
   75% { transform: translateX(-3px) rotate(-1deg); }
+}
+
+@keyframes griddy-pulse {
+  50% { transform: translateX(-50%) scale(1.08) rotate(-2deg); }
 }
 
 @media (max-width: 720px) {

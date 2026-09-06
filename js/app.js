@@ -184,6 +184,19 @@ function createSfx() {
       osc.stop(audio.currentTime + 0.9);
       setTimeout(() => beep(64, 0.35, "sine", 0.05), 220);
     },
+    whoosh() {
+      beep(220, 0.08, "triangle", 0.04);
+      setTimeout(() => beep(340, 0.1, "sine", 0.035), 60);
+    },
+    kick() {
+      beep(90, 0.08, "square", 0.07);
+      setTimeout(() => beep(160, 0.1, "triangle", 0.05), 50);
+      setTimeout(() => beep(70, 0.16, "sine", 0.04), 110);
+    },
+    griddyBeat() {
+      beep(196, 0.05, "square", 0.03);
+      setTimeout(() => beep(247, 0.05, "square", 0.025), 80);
+    },
   };
 }
 
@@ -506,6 +519,32 @@ function buildWhale() {
   return whale;
 }
 
+function makeFruit() {
+  const kinds = [
+    { color: 0xe23b3b, squash: 1 },
+    { color: 0xf4c430, squash: 1.15 },
+    { color: 0xff8c1a, squash: 1 },
+    { color: 0x8bc34a, squash: 1.35 },
+    { color: 0xc72c6c, squash: 0.9 },
+    { color: 0x7b2d8e, squash: 1 },
+    { color: 0xffe27a, squash: 1.6 },
+  ];
+  const kind = kinds[Math.floor(Math.random() * kinds.length)];
+  const fruit = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 10, 8),
+    new THREE.MeshStandardMaterial({ color: kind.color, roughness: 0.55 })
+  );
+  fruit.scale.set(1, kind.squash, 1);
+  const leaf = new THREE.Mesh(
+    new THREE.ConeGeometry(0.06, 0.12, 5),
+    new THREE.MeshStandardMaterial({ color: 0x3d8b2e, roughness: 0.8 })
+  );
+  leaf.position.y = 0.22 * kind.squash;
+  fruit.add(leaf);
+  fruit.castShadow = true;
+  return fruit;
+}
+
 function buildCertificate() {
   const cert = new THREE.Mesh(
     new THREE.BoxGeometry(0.9, 0.02, 0.64),
@@ -556,6 +595,13 @@ class Game {
     this.whaleTime = 0;
     this.whalePaused = false;
     this.certificate = null;
+    this.fruitMode = false;
+    this.fruitPhase = "idle";
+    this.fruitTime = 0;
+    this.fruits = [];
+    this.griddyLocked = false;
+    this.griddyGrace = 0;
+    this.griddyBeat = 0;
   }
 
   async start() {
@@ -648,8 +694,9 @@ class Game {
 
   bindInput() {
     const down = (event) => {
+      if (this.stopGriddyIfActive()) return;
       if (event.target.closest("button") || event.target.closest(".overlay")) return;
-      if (this.blocked || this.airborne) return;
+      if (this.blocked || this.airborne || this.fruitMode) return;
       event.preventDefault();
       this.charging = true;
     };
@@ -667,7 +714,15 @@ class Game {
     window.addEventListener("pointerdown", down);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
+    window.addEventListener("pointermove", (event) => {
+      if (!this.griddyLocked || this.griddyGrace > 0) return;
+      if (Math.abs(event.movementX) + Math.abs(event.movementY) > 4) this.stopGriddy();
+    });
     window.addEventListener("keydown", (event) => {
+      if (this.stopGriddyIfActive()) {
+        event.preventDefault();
+        return;
+      }
       const key = (event.key || "").toLowerCase();
       if (event.code === "Escape") this.closeShop();
       if (key === "s") this.openShop();
@@ -681,9 +736,14 @@ class Game {
         if (!event.repeat) this.summonWhale();
         return;
       }
+      if (key === "f") {
+        event.preventDefault();
+        if (!event.repeat) this.startFruitFury();
+        return;
+      }
       if (event.code !== "Space" && key !== " ") return;
       event.preventDefault();
-      if (event.repeat || this.blocked || this.exploding || this.farting) return;
+      if (event.repeat || this.blocked || this.exploding || this.farting || this.fruitMode) return;
       if (this.airborne) {
         this.airTap();
         return;
@@ -1000,6 +1060,145 @@ class Game {
     }
   }
 
+  startFruitFury() {
+    if (!this.ready || this.blocked || this.exploding || this.farting || this.fruitMode) return;
+    this.charging = false;
+    this.charge = 0;
+    this.airborne = false;
+    this.flipping = false;
+    this.height = 0;
+    this.velocity = 0;
+    this.fruitMode = true;
+    this.fruitPhase = "incoming";
+    this.fruitTime = 0;
+    this.griddyLocked = false;
+    this.griddyGrace = 0.45;
+    this.griddyBeat = 0;
+    this.blocked = true;
+    this.clearFruits();
+    for (let i = 0; i < 6; i += 1) {
+      const fruit = makeFruit();
+      fruit.position.set(6.4 + i * 0.55, 1.1 + Math.random() * 0.9, -0.7 + Math.random() * 1.4);
+      fruit.userData.v = new THREE.Vector3(-7.2 - Math.random() * 1.4, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.8);
+      fruit.userData.spin = new THREE.Vector3(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+      fruit.userData.kicked = false;
+      this.scene.add(fruit);
+      this.fruits.push(fruit);
+    }
+    this.sfx.whoosh();
+    ui.combo.hidden = false;
+    ui.combo.classList.add("griddy");
+    ui.combo.textContent = "FRUIT";
+    ui.payout.hidden = false;
+    ui.payout.textContent = "incoming";
+    this.flashTimer = 99;
+    ui.hint.textContent = "Roundhouse incoming.";
+    this.say("The orchard has made a terrible mistake.");
+  }
+
+  updateFruitFury(dt) {
+    this.fruitTime += dt;
+    if (this.griddyGrace > 0) this.griddyGrace = Math.max(0, this.griddyGrace - dt);
+
+    this.fruits.forEach((fruit) => {
+      fruit.userData.v.y -= fruit.userData.kicked ? 14 * dt : 0;
+      fruit.position.addScaledVector(fruit.userData.v, dt);
+      fruit.rotation.x += fruit.userData.spin.x * dt;
+      fruit.rotation.y += fruit.userData.spin.y * dt;
+    });
+
+    if (this.fruitPhase === "incoming") {
+      const wind = Math.min(1, this.fruitTime / 0.35);
+      this.cowRig.rotation.y = -0.55 * wind;
+      this.cowRig.rotation.z = 0.15 * wind;
+      this.cowRig.position.set(0, 0.64, 0);
+      if (this.fruitTime > 0.42) {
+        this.fruitPhase = "kick";
+        this.fruitTime = 0;
+        this.sfx.kick();
+        ui.combo.textContent = "ROUNDHOUSE";
+        ui.payout.textContent = "HIYAAA";
+      }
+      return;
+    }
+
+    if (this.fruitPhase === "kick") {
+      const k = Math.min(1, this.fruitTime / 0.38);
+      this.cowRig.rotation.y = -0.55 + k * Math.PI * 1.35;
+      this.cowRig.rotation.z = Math.sin(k * Math.PI) * -0.95;
+      this.cowRig.rotation.x = Math.sin(k * Math.PI) * 0.35;
+      this.cowRig.position.set(k * 0.35, 0.64 + Math.sin(k * Math.PI) * 0.25, 0);
+      if (this.fruitTime > 0.16) {
+        this.fruits.forEach((fruit) => {
+          if (fruit.userData.kicked) return;
+          fruit.userData.kicked = true;
+          fruit.userData.v.set(10 + Math.random() * 6, 6 + Math.random() * 4, (Math.random() - 0.5) * 8);
+        });
+      }
+      if (this.fruitTime > 0.7) {
+        this.fruitPhase = "griddy";
+        this.fruitTime = 0;
+        this.griddyLocked = true;
+        this.griddyGrace = 0.4;
+        this.cow.rotation.y = Math.PI * 0.2;
+        ui.combo.textContent = "THE GRIDDY";
+        ui.payout.textContent = "eternal";
+        ui.hint.textContent = "She will do this forever. Press anything or move the cursor.";
+        this.say("The cow has entered the griddy. Time is now optional.");
+      }
+      return;
+    }
+
+    const beat = this.fruitTime * 8.2;
+    const step = Math.sin(beat) * 0.42;
+    const hop = Math.abs(Math.sin(beat * 2)) * 0.16;
+    this.cowRig.position.set(step, 0.64 + hop, 0);
+    this.cowRig.rotation.x = -0.28 + Math.sin(beat * 0.5) * 0.06;
+    this.cowRig.rotation.y = Math.sin(beat) * 0.55;
+    this.cowRig.rotation.z = -step * 0.55;
+    this.cow.rotation.y = Math.PI * 0.2 + Math.sin(beat * 2) * 0.35;
+    this.cowRig.scale.set(1.05, 1 + hop * 0.4, 1.05);
+    this.griddyBeat += dt;
+    if (this.griddyBeat > 0.42) {
+      this.griddyBeat = 0;
+      this.sfx.griddyBeat();
+    }
+  }
+
+  stopGriddyIfActive() {
+    if (!this.griddyLocked || this.griddyGrace > 0) return false;
+    this.stopGriddy();
+    return true;
+  }
+
+  stopGriddy() {
+    this.fruitMode = false;
+    this.fruitPhase = "idle";
+    this.griddyLocked = false;
+    this.griddyGrace = 0;
+    this.blocked = false;
+    this.charging = false;
+    this.charge = 0;
+    this.clearFruits();
+    this.cowRig.position.set(0, 0.64, 0);
+    this.cowRig.rotation.set(0, 0, 0);
+    this.cowRig.scale.set(1, 1, 1);
+    this.cow.rotation.y = Math.PI * 0.2;
+    this.cow.rotation.z = 0;
+    this.shadowBlob.position.x = 0;
+    ui.combo.classList.remove("griddy");
+    ui.combo.hidden = true;
+    ui.payout.hidden = true;
+    this.flashTimer = 0;
+    ui.hint.textContent = "The griddy has been adjourned. F to start it again.";
+    this.say("The cow returns from the dance dimension.");
+  }
+
+  clearFruits() {
+    this.fruits.forEach((fruit) => this.scene.remove(fruit));
+    this.fruits = [];
+  }
+
   burstCoins(count) {
     const gold = new THREE.MeshStandardMaterial({ color: 0xf3c43a, metalness: 0.55, roughness: 0.3 });
     for (let i = 0; i < count; i += 1) {
@@ -1230,6 +1429,15 @@ class Game {
       return;
     }
 
+    if (this.fruitMode) {
+      this.updateFruitFury(dt);
+      this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 8 * dt;
+      const shadowScale = 0.7 + Math.abs(this.cowRig.position.x) * 0.15;
+      this.shadowBlob.position.x = this.cowRig.position.x;
+      this.shadowBlob.scale.setScalar(shadowScale);
+      return;
+    }
+
     if (this.farting) {
       this.fartTime += dt;
       this.fartEmit += dt;
@@ -1306,7 +1514,7 @@ class Game {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) ui.toast.hidden = true;
     }
-    if (this.flashTimer > 0) {
+    if (this.flashTimer > 0 && !this.fruitMode) {
       this.flashTimer -= dt;
       if (this.flashTimer <= 0) {
         ui.combo.hidden = true;
