@@ -466,6 +466,42 @@ function buildStars() {
   return stars;
 }
 
+function fibonacciSphereDirections(count) {
+  const points = [];
+  const offset = 2 / count;
+  const increment = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i += 1) {
+    const y = i * offset - 1 + offset / 2;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const phi = i * increment;
+    points.push(new THREE.Vector3(Math.cos(phi) * r, y, Math.sin(phi) * r));
+  }
+  return points;
+}
+
+function buildDiscoRig() {
+  const group = new THREE.Group();
+  const up = new THREE.Vector3(0, 1, 0);
+  const rayCount = 20;
+  fibonacciSphereDirections(rayCount).forEach((dir, i) => {
+    const length = 3.2 + Math.random() * 1.4;
+    const geometry = new THREE.ConeGeometry(0.05, length, 6, 1, true);
+    geometry.translate(0, length / 2, 0);
+    const material = new THREE.MeshBasicMaterial({
+      color: new THREE.Color().setHSL(i / rayCount, 1, 0.6),
+      transparent: true,
+      opacity: 0.5,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const ray = new THREE.Mesh(geometry, material);
+    ray.quaternion.setFromUnitVectors(up, dir);
+    group.add(ray);
+  });
+  return group;
+}
+
 function buildWhale() {
   const whale = new THREE.Group();
   const skin = new THREE.MeshStandardMaterial({ color: 0x6d8aa3, roughness: 0.62 });
@@ -689,6 +725,12 @@ class Game {
     this.birdsPull = new THREE.Vector2(0, 0);
     this.birdsWait = 0;
     this.slingBand = null;
+    this.discoActive = false;
+    this.discoTime = 0;
+    this.discoDuration = 5;
+    this.discoRig = null;
+    this.discoLights = [];
+    this.discoMeshMaterials = [];
   }
 
   async start() {
@@ -858,6 +900,11 @@ class Game {
         if (!event.repeat) this.barrelRoll();
         return;
       }
+      if (key === "c") {
+        event.preventDefault();
+        if (!event.repeat) this.colorSplash();
+        return;
+      }
       if (event.code !== "Space" && key !== " ") return;
       event.preventDefault();
       if (event.repeat || this.blocked || this.exploding || this.farting || this.fruitMode || this.hatesYou) return;
@@ -928,6 +975,97 @@ class Game {
     return Math.min(turn, Math.PI * 2 - turn) < 0.5;
   }
 
+  colorSplash() {
+    if (!this.ready || this.blocked || this.exploding || this.farting || this.fruitMode || this.discoActive) return;
+    if (!this.cow || !this.flipGroup) return;
+    this.discoActive = true;
+    this.discoTime = 0;
+    this.discoMeshMaterials = [];
+    this.cow.traverse((child) => {
+      if (!child.isMesh || !child.material) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((mat) => {
+        if (!mat.color) return;
+        this.discoMeshMaterials.push({
+          material: mat,
+          color: mat.color.clone(),
+          emissive: mat.emissive ? mat.emissive.clone() : null,
+          emissiveIntensity: mat.emissiveIntensity ?? 1,
+        });
+      });
+    });
+    this.discoRig = buildDiscoRig();
+    this.discoRig.position.y = this.flipMid;
+    this.flipGroup.add(this.discoRig);
+    this.discoLights = [0, 1, 2].map((i) => {
+      const light = new THREE.PointLight(0xffffff, 1.4, 10, 2);
+      light.position.set(0, this.flipMid + 0.3, 0);
+      this.flipGroup.add(light);
+      return light;
+    });
+    this.sfx.coins();
+    this.say("Disco cow engaged!");
+    ui.combo.hidden = false;
+    ui.combo.classList.add("disco");
+    ui.combo.textContent = "DISCO!";
+    this.flashTimer = Math.max(this.flashTimer, 1.6);
+    ui.hint.textContent = "Groovy. C to do it again.";
+  }
+
+  updateDisco(dt) {
+    if (!this.discoActive) return;
+    this.discoTime += dt;
+    const t = this.discoTime;
+    this.discoMeshMaterials.forEach((entry, idx) => {
+      const hue = (t * 0.6 + idx * 0.09) % 1;
+      entry.material.color.setHSL(hue, 0.85, 0.55);
+      if (entry.emissive) {
+        entry.material.emissive.setHSL((hue + 0.5) % 1, 0.9, 0.4);
+        entry.material.emissiveIntensity = 1.1;
+      }
+    });
+    if (this.discoRig) {
+      this.discoRig.rotation.y += 3.4 * dt;
+      this.discoRig.rotation.x += 1.1 * dt;
+      this.discoRig.children.forEach((ray, idx) => {
+        const hue = (t * 1.2 + idx * 0.07) % 1;
+        ray.material.color.setHSL(hue, 1, 0.6);
+        ray.material.opacity = 0.35 + Math.sin(t * 8 + idx) * 0.15;
+      });
+    }
+    this.discoLights.forEach((light, idx) => {
+      const hue = (t * 1.4 + idx * 0.33) % 1;
+      light.color.setHSL(hue, 1, 0.55);
+      light.intensity = 1.2 + Math.sin(t * 9 + idx * 2) * 0.7;
+    });
+    if (this.discoTime >= this.discoDuration) this.endColorSplash();
+  }
+
+  endColorSplash() {
+    if (!this.discoActive) return;
+    this.discoActive = false;
+    this.discoMeshMaterials.forEach((entry) => {
+      entry.material.color.copy(entry.color);
+      if (entry.emissive) {
+        entry.material.emissive.copy(entry.emissive);
+        entry.material.emissiveIntensity = entry.emissiveIntensity;
+      }
+    });
+    this.discoMeshMaterials = [];
+    if (this.discoRig) {
+      this.flipGroup.remove(this.discoRig);
+      this.discoRig.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
+      });
+      this.discoRig = null;
+    }
+    this.discoLights.forEach((light) => this.flipGroup.remove(light));
+    this.discoLights = [];
+    ui.combo.classList.remove("disco");
+    ui.hint.textContent = "Hold to squash. C to disco again.";
+  }
+
   land() {
     const stuckTheFlip = this.flipping && this.isUpright();
     this.airborne = false;
@@ -958,6 +1096,7 @@ class Game {
   }
 
   explode() {
+    if (this.discoActive) this.endColorSplash();
     const lost = this.state.money;
     this.exploding = true;
     this.blocked = true;
@@ -1231,6 +1370,7 @@ class Game {
   }
 
   dieInSpace() {
+    if (this.discoActive) this.endColorSplash();
     this.farting = false;
     this.exploding = true;
     this.blocked = true;
@@ -1709,6 +1849,7 @@ class Game {
     this.updateCoins(dt);
     this.updateDebris(dt);
     this.updateWhale(dt);
+    this.updateDisco(dt);
     this.updateUi(dt);
     const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.35 : 0;
     const shakeY = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.2 : 0;

@@ -194,6 +194,12 @@ button:focus {
   text-shadow: 0 4px 0 #5a1000, 0 0 18px rgba(255, 60, 0, 0.7);
 }
 
+.combo.disco {
+  color: #fff;
+  text-shadow: 0 4px 0 #4b0f63, 0 0 22px rgba(255, 255, 255, 0.85);
+  animation: disco-hue 1.1s linear infinite;
+}
+
 .payout.dead {
   color: #ff8b8b;
 }
@@ -472,6 +478,11 @@ h2 {
 
 @keyframes griddy-pulse {
   50% { transform: translateX(-50%) scale(1.08) rotate(-2deg); }
+}
+
+@keyframes disco-hue {
+  from { filter: hue-rotate(0deg); }
+  to { filter: hue-rotate(360deg); }
 }
 
 @media (max-width: 720px) {
