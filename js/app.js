@@ -731,6 +731,7 @@ class Game {
     this.discoRig = null;
     this.discoLights = [];
     this.discoMeshMaterials = [];
+    this.discoScratch = new THREE.Color();
   }
 
   async start() {
@@ -981,18 +982,33 @@ class Game {
     this.discoActive = true;
     this.discoTime = 0;
     this.discoMeshMaterials = [];
+    let meshIndex = 0;
     this.cow.traverse((child) => {
-      if (!child.isMesh || !child.material) return;
+      if (!child.isMesh || !child.geometry) return;
       const mats = Array.isArray(child.material) ? child.material : [child.material];
-      mats.forEach((mat) => {
-        if (!mat.color) return;
-        this.discoMeshMaterials.push({
-          material: mat,
-          color: mat.color.clone(),
-          emissive: mat.emissive ? mat.emissive.clone() : null,
-          emissiveIntensity: mat.emissiveIntensity ?? 1,
-        });
+      if (!mats.length || !mats[0]) return;
+      const originalGeometry = child.geometry;
+      const triGeometry = originalGeometry.toNonIndexed();
+      const vertexCount = triGeometry.attributes.position.count;
+      triGeometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3));
+      child.geometry = triGeometry;
+      const materials = mats.map((material) => ({
+        material,
+        originalColor: material.color ? material.color.clone() : null,
+        originalVertexColors: material.vertexColors,
+      }));
+      materials.forEach(({ material }) => {
+        if (material.color) material.color.set(0xffffff);
+        material.vertexColors = true;
+        material.needsUpdate = true;
       });
+      this.discoMeshMaterials.push({
+        mesh: child,
+        originalGeometry,
+        materials,
+        offset: meshIndex * 0.17,
+      });
+      meshIndex += 1;
     });
     this.discoRig = buildDiscoRig();
     this.discoRig.position.y = this.flipMid;
@@ -1016,13 +1032,23 @@ class Game {
     if (!this.discoActive) return;
     this.discoTime += dt;
     const t = this.discoTime;
-    this.discoMeshMaterials.forEach((entry, idx) => {
-      const hue = (t * 0.6 + idx * 0.09) % 1;
-      entry.material.color.setHSL(hue, 0.85, 0.55);
-      if (entry.emissive) {
-        entry.material.emissive.setHSL((hue + 0.5) % 1, 0.9, 0.4);
-        entry.material.emissiveIntensity = 1.1;
+    this.discoMeshMaterials.forEach((entry) => {
+      const colorAttr = entry.mesh.geometry.getAttribute("color");
+      if (!colorAttr) return;
+      const arr = colorAttr.array;
+      const triCount = arr.length / 9;
+      for (let tri = 0; tri < triCount; tri += 1) {
+        const hue = (t * 0.5 + entry.offset + tri * 0.037) % 1;
+        this.discoScratch.setHSL(hue, 0.9, 0.55);
+        const base = tri * 9;
+        for (let v = 0; v < 3; v += 1) {
+          const idx = base + v * 3;
+          arr[idx] = this.discoScratch.r;
+          arr[idx + 1] = this.discoScratch.g;
+          arr[idx + 2] = this.discoScratch.b;
+        }
       }
+      colorAttr.needsUpdate = true;
     });
     if (this.discoRig) {
       this.discoRig.rotation.y += 3.4 * dt;
@@ -1045,11 +1071,13 @@ class Game {
     if (!this.discoActive) return;
     this.discoActive = false;
     this.discoMeshMaterials.forEach((entry) => {
-      entry.material.color.copy(entry.color);
-      if (entry.emissive) {
-        entry.material.emissive.copy(entry.emissive);
-        entry.material.emissiveIntensity = entry.emissiveIntensity;
-      }
+      entry.mesh.geometry.dispose();
+      entry.mesh.geometry = entry.originalGeometry;
+      entry.materials.forEach(({ material, originalColor, originalVertexColors }) => {
+        if (originalColor) material.color.copy(originalColor);
+        material.vertexColors = originalVertexColors;
+        material.needsUpdate = true;
+      });
     });
     this.discoMeshMaterials = [];
     if (this.discoRig) {
