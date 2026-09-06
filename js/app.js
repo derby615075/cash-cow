@@ -3,6 +3,7 @@ import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 
 const SAVE_KEY = "cash-cow-useless-fortune";
 const COW_PATH = new URL("../38-lp_cow/LP_cow.fbx", import.meta.url).href;
+const SLING = { x: -7.2, y: 2.25, scale: 0.56, birdR: 0.26 };
 
 const SHOP = [
   { name: "Extra spring", blurb: "The trampoline is already doing its job.", price: 40 },
@@ -1791,16 +1792,19 @@ class Game {
     level.add(grass);
 
     const wood = new THREE.MeshStandardMaterial({ color: 0x8a4b1f, roughness: 0.75 });
-    const postA = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.8, 8), wood);
-    postA.position.set(-7.45, 0.9, 0.18);
+    const postA = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 2.7, 8), wood);
+    postA.position.set(SLING.x - 0.42, 1.35, 0.22);
     const postB = postA.clone();
-    postB.position.set(-6.95, 0.9, -0.18);
+    postB.position.set(SLING.x + 0.42, 1.35, -0.22);
     level.add(postA, postB);
+    const fork = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.16, 0.16), wood);
+    fork.position.set(SLING.x, 2.62, 0);
+    level.add(fork);
 
     const bandGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-7.45, 1.55, 0.18),
-      new THREE.Vector3(-7.2, 1.35, 0),
-      new THREE.Vector3(-6.95, 1.55, -0.18),
+      new THREE.Vector3(SLING.x - 0.42, 2.55, 0.22),
+      new THREE.Vector3(SLING.x, SLING.y, 0),
+      new THREE.Vector3(SLING.x + 0.42, 2.55, -0.22),
     ]);
     this.slingBand = new THREE.Line(bandGeo, new THREE.LineBasicMaterial({ color: 0x5c2e0e, linewidth: 2 }));
     level.add(this.slingBand);
@@ -1862,11 +1866,11 @@ class Game {
     this.birdsFlying = false;
     this.birdsAiming = false;
     this.birdsPull.set(0, 0);
-    this.cowRig.position.set(-7.2, 1.35, 0);
+    this.cowRig.position.set(SLING.x, SLING.y, 0);
     this.cowRig.rotation.set(0, 0, 0);
-    this.cowRig.scale.set(1, 1, 1);
+    this.cowRig.scale.setScalar(SLING.scale);
     if (this.cow) this.cow.rotation.set(0, Math.PI * 0.15, 0);
-    this.updateSlingBand(-7.2, 1.35);
+    this.updateSlingBand(SLING.x, SLING.y);
     this.hideAimArc();
   }
 
@@ -1923,13 +1927,13 @@ class Game {
 
   updateBirdsAim(event) {
     const hit = this.pointerToBirdsPlane(event);
-    let dx = hit.x + 7.2;
-    let dy = hit.y - 1.35;
+    let dx = hit.x - SLING.x;
+    let dy = hit.y - SLING.y;
     const len = Math.min(3.15, Math.hypot(dx, dy) || 0.01);
     const ang = Math.atan2(dy, dx);
     this.birdsPull.set(Math.cos(ang) * len, Math.sin(ang) * len);
-    const x = -7.2 + this.birdsPull.x;
-    const y = 1.35 + this.birdsPull.y;
+    const x = SLING.x + this.birdsPull.x;
+    const y = SLING.y + this.birdsPull.y;
     this.cowRig.position.set(x, y, 0);
     this.updateSlingBand(x, y);
     this.updateAimArc(x, y);
@@ -1953,13 +1957,13 @@ class Game {
       y: this.cowRig.position.y,
       vx: -this.birdsPull.x * 5.4,
       vy: -this.birdsPull.y * 5.4,
-      r: 0.42,
+      r: SLING.birdR,
       mass: 1.6,
     };
     this.sfx.whoosh();
     this.sfx.moo();
     this.refreshBirdsHud();
-    this.updateSlingBand(-7.2, 1.35);
+    this.updateSlingBand(SLING.x, SLING.y);
     this.hideAimArc();
   }
 
@@ -1980,8 +1984,8 @@ class Game {
       bird.vy -= 16 * dt;
       bird.x += bird.vx * dt;
       bird.y += bird.vy * dt;
-      if (bird.y < 0.42) {
-        bird.y = 0.42;
+      if (bird.y < SLING.birdR) {
+        bird.y = SLING.birdR;
         bird.vy *= -0.32;
         bird.vx *= 0.78;
       }
