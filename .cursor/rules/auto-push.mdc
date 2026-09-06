@@ -1,0 +1,12 @@
+---
+description: Commit and push finished work to GitHub without asking
+alwaysApply: true
+---
+
+# Auto commit and push
+
+After finishing work the user asked for, commit the relevant files and push to `origin` on the current branch. Do this by default. Do not ask first.
+
+Skip only when the user says not to commit or push, or when the change is a secret (`.env`, credentials, keys).
+
+Write a short commit message that says why the change exists. Never amend a commit that was already pushed. Never force-push to main.

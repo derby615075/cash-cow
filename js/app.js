@@ -1,0 +1,759 @@
+import * as THREE from "three";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+
+const SAVE_KEY = "cash-cow-useless-fortune";
+const COW_PATH = new URL("../38-lp_cow/LP_cow.fbx", import.meta.url).href;
+
+const SHOP = [
+  { name: "Extra spring", blurb: "The trampoline is already doing its job.", price: 40 },
+  { name: "Designer spots", blurb: "The cow already came with spots.", price: 120 },
+  { name: "Golden hay", blurb: "Looks expensive. Tastes like hay.", price: 260 },
+  { name: "Cowbell of destiny", blurb: "Rings once. Means nothing.", price: 500 },
+  { name: "A tiny yacht", blurb: "There is no ocean here.", price: 1800 },
+  { name: "Cow therapist", blurb: "She would just tell you to keep jumping.", price: 3500 },
+  { name: "Meaning", blurb: "Backordered until the heat death of the sun.", price: 99999 },
+];
+
+const NOTHING_LINES = [
+  "You can do nothing with this money.",
+  "The money sits there. Menacingly.",
+  "Purchase declined by the universe.",
+  "Nice thought. No.",
+  "This currency is strictly ceremonial.",
+  "The cow does not accept this.",
+  "Error: money is useless.",
+  "Spent $0. Received 0 things.",
+  "The Barn Mart is a decorative building.",
+  "Still nothing. The pile just looks at you.",
+];
+
+const $ = (id) => document.getElementById(id);
+
+const ui = {
+  hud: $("hud"),
+  title: $("title"),
+  loader: $("loader"),
+  loadFill: $("load-fill"),
+  shop: $("shop"),
+  shopList: $("shop-list"),
+  shopMoney: $("shop-money"),
+  moneyBtn: $("money-btn"),
+  moneyValue: $("money-value"),
+  jumpCount: $("jump-count"),
+  spentCount: $("spent-count"),
+  shopBtn: $("shop-btn"),
+  closeShop: $("close-shop"),
+  startBtn: $("start-btn"),
+  useMoneyBtn: $("use-money-btn"),
+  chargeFill: $("charge-fill"),
+  hint: $("hint"),
+  combo: $("combo"),
+  payout: $("payout"),
+  toast: $("toast"),
+};
+
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return { money: 0, jumps: 0, attempts: 0 };
+    const data = JSON.parse(raw);
+    return {
+      money: Number(data.money) || 0,
+      jumps: Number(data.jumps) || 0,
+      attempts: Number(data.attempts) || 0,
+    };
+  } catch {
+    return { money: 0, jumps: 0, attempts: 0 };
+  }
+}
+
+function save(state) {
+  localStorage.setItem(SAVE_KEY, JSON.stringify({
+    money: state.money,
+    jumps: state.jumps,
+    attempts: state.attempts,
+  }));
+}
+
+function formatMoney(n) {
+  return `$${Math.floor(n).toLocaleString("en-US")}`;
+}
+
+function createSfx() {
+  let ctx = null;
+  const ensure = () => {
+    if (!ctx) ctx = new AudioContext();
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  };
+
+  const beep = (freq, dur, type, gain = 0.08) => {
+    const audio = ensure();
+    const osc = audio.createOscillator();
+    const amp = audio.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    amp.gain.setValueAtTime(gain, audio.currentTime);
+    amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
+    osc.connect(amp);
+    amp.connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime + dur);
+  };
+
+  return {
+    unlock: ensure,
+    charge(t) {
+      beep(90 + t * 220, 0.05, "triangle", 0.03);
+    },
+    launch() {
+      beep(140, 0.12, "square", 0.06);
+      setTimeout(() => beep(220, 0.16, "triangle", 0.05), 70);
+    },
+    land() {
+      beep(90, 0.1, "sine", 0.07);
+    },
+    coins() {
+      beep(880, 0.08, "square", 0.04);
+      setTimeout(() => beep(1175, 0.1, "square", 0.035), 60);
+    },
+    moo() {
+      const audio = ensure();
+      const osc = audio.createOscillator();
+      const amp = audio.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(180, audio.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(90, audio.currentTime + 0.45);
+      amp.gain.setValueAtTime(0.05, audio.currentTime);
+      amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.5);
+      osc.connect(amp);
+      amp.connect(audio.destination);
+      osc.start();
+      osc.stop(audio.currentTime + 0.5);
+    },
+    nope() {
+      beep(180, 0.12, "square", 0.05);
+      setTimeout(() => beep(120, 0.18, "square", 0.05), 90);
+    },
+  };
+}
+
+function makeFallbackCow() {
+  const cow = new THREE.Group();
+  const cream = new THREE.MeshStandardMaterial({ color: 0xf3e2c2, roughness: 0.72 });
+  const brown = new THREE.MeshStandardMaterial({ color: 0x6b3a1d, roughness: 0.7 });
+  const pink = new THREE.MeshStandardMaterial({ color: 0xe89aa0, roughness: 0.55 });
+  const black = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.95, 0.85), cream);
+  body.position.set(0, 0.95, 0);
+  body.castShadow = true;
+  cow.add(body);
+
+  const spot = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.4, 0.86), brown);
+  spot.position.set(-0.25, 1.05, 0);
+  cow.add(spot);
+  const spot2 = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.32, 0.86), brown);
+  spot2.position.set(0.4, 0.85, 0);
+  cow.add(spot2);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.48, 0.5), cream);
+  head.position.set(0.95, 1.15, 0);
+  head.castShadow = true;
+  cow.add(head);
+
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.2, 0.32), pink);
+  snout.position.set(1.28, 1.02, 0);
+  cow.add(snout);
+
+  for (const side of [-1, 1]) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 6), cream);
+    horn.position.set(0.88, 1.48, 0.16 * side);
+    horn.rotation.z = -0.35;
+    cow.add(horn);
+    const ear = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.2), cream);
+    ear.position.set(0.82, 1.28, 0.32 * side);
+    cow.add(ear);
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), black);
+    eye.position.set(1.16, 1.22, 0.16 * side);
+    cow.add(eye);
+    const udder = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), pink);
+    udder.position.set(-0.15, 0.52, 0);
+    if (side === -1) cow.add(udder);
+  }
+
+  for (const [x, z] of [[0.45, 0.26], [0.45, -0.26], [-0.45, 0.26], [-0.45, -0.26]]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.55, 0.18), cream);
+    leg.position.set(x, 0.28, z);
+    leg.castShadow = true;
+    cow.add(leg);
+    const hoof = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), black);
+    hoof.position.set(x, 0.05, z);
+    cow.add(hoof);
+  }
+
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.08), cream);
+  tail.position.set(-0.82, 1.05, 0);
+  tail.rotation.z = 0.4;
+  cow.add(tail);
+  const tuft = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), brown);
+  tuft.position.set(-0.98, 0.84, 0);
+  cow.add(tuft);
+
+  const highlight = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), white);
+  highlight.position.set(1.2, 1.25, 0.16);
+  cow.add(highlight);
+
+  return cow;
+}
+
+function hardenCowMaterials(root) {
+  const palette = [0xf4e1c1, 0x6a3a1c, 0x2b2b2b, 0xe59aa3, 0xf7f1e3];
+  let i = 0;
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
+    const next = mats.map((mat) => {
+      const color = new THREE.Color(palette[i++ % palette.length]);
+      if (mat && mat.color && mat.color.getHex() > 0) {
+        const { r, g, b } = mat.color;
+        const dull = Math.abs(r - g) < 0.03 && Math.abs(g - b) < 0.03 && r < 0.2;
+        if (!dull) color.copy(mat.color);
+      }
+      return new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.62,
+        metalness: 0.03,
+        side: THREE.DoubleSide,
+        transparent: false,
+        opacity: 1,
+      });
+    });
+    child.material = next.length === 1 ? next[0] : next;
+    child.castShadow = true;
+    child.receiveShadow = true;
+    child.frustumCulled = false;
+    child.visible = true;
+    if (child.geometry) child.geometry.computeBoundingSphere();
+  });
+}
+
+function meshBox(root) {
+  const box = new THREE.Box3();
+  let found = false;
+  root.updateMatrixWorld(true);
+  root.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return;
+    child.geometry.computeBoundingBox();
+    const next = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
+    if (!next.isEmpty()) {
+      if (!found) box.copy(next);
+      else box.union(next);
+      found = true;
+    }
+  });
+  return found ? box : new THREE.Box3().setFromObject(root);
+}
+
+function fitCow(model) {
+  const wrap = new THREE.Group();
+  wrap.add(model);
+
+  let box = meshBox(wrap);
+  let size = box.getSize(new THREE.Vector3());
+  if (size.y > 0 && size.y < size.x * 0.45) {
+    model.rotation.x = -Math.PI / 2;
+    box = meshBox(wrap);
+    size = box.getSize(new THREE.Vector3());
+  }
+
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  wrap.scale.setScalar(2.15 / maxDim);
+
+  box = meshBox(wrap);
+  wrap.position.sub(box.getCenter(new THREE.Vector3()));
+  box = meshBox(wrap);
+  wrap.position.y -= box.min.y;
+
+  const finalSize = meshBox(wrap).getSize(new THREE.Vector3());
+  wrap.userData.size = finalSize;
+  wrap.userData.meshes = 0;
+  wrap.traverse((child) => {
+    if (child.isMesh) wrap.userData.meshes += 1;
+  });
+  return wrap;
+}
+
+function buildTrampoline() {
+  const group = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, metalness: 0.65, roughness: 0.35 });
+  const pad = new THREE.MeshStandardMaterial({ color: 0xd83a2f, roughness: 0.55 });
+  const springMat = new THREE.MeshStandardMaterial({ color: 0xf3c43a, metalness: 0.4, roughness: 0.4 });
+  const footMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
+
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.08, 10, 40), metal);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.62;
+  rim.castShadow = true;
+  group.add(rim);
+
+  const bed = new THREE.Mesh(new THREE.CylinderGeometry(1.46, 1.46, 0.06, 40), pad);
+  bed.position.y = 0.6;
+  bed.receiveShadow = true;
+  group.add(bed);
+  group.userData.bed = bed;
+
+  for (let i = 0; i < 12; i += 1) {
+    const a = (i / 12) * Math.PI * 2;
+    const spring = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.42, 8), springMat);
+    spring.position.set(Math.cos(a) * 1.55, 0.38, Math.sin(a) * 1.55);
+    group.add(spring);
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.55, 8), metal);
+    leg.position.set(Math.cos(a) * 1.28, 0.22, Math.sin(a) * 1.28);
+    group.add(leg);
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.06, 8), footMat);
+    foot.position.set(Math.cos(a) * 1.28, 0.03, Math.sin(a) * 1.28);
+    group.add(foot);
+  }
+
+  return group;
+}
+
+function buildWorld(scene) {
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(42, 48),
+    new THREE.MeshStandardMaterial({ color: 0x4ea53a, roughness: 0.95 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const dirt = new THREE.Mesh(
+    new THREE.CircleGeometry(3.2, 28),
+    new THREE.MeshStandardMaterial({ color: 0x7a5a32, roughness: 1 })
+  );
+  dirt.rotation.x = -Math.PI / 2;
+  dirt.position.y = 0.01;
+  dirt.receiveShadow = true;
+  scene.add(dirt);
+
+  const tuftMat = new THREE.MeshStandardMaterial({ color: 0x2f7a24, roughness: 1 });
+  for (let i = 0; i < 50; i += 1) {
+    const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.28, 5), tuftMat);
+    const a = Math.random() * Math.PI * 2;
+    const r = 4 + Math.random() * 18;
+    tuft.position.set(Math.cos(a) * r, 0.14, Math.sin(a) * r);
+    tuft.rotation.z = (Math.random() - 0.5) * 0.3;
+    scene.add(tuft);
+  }
+
+  const wood = new THREE.MeshStandardMaterial({ color: 0x8a4b1f, roughness: 0.8 });
+  for (let i = -8; i <= 8; i += 1) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.1, 0.12), wood);
+    post.position.set(i * 1.15, 0.55, -8.5);
+    post.castShadow = true;
+    scene.add(post);
+    if (i < 8) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.08, 0.08), wood);
+      rail.position.set(i * 1.15 + 0.57, 0.72, -8.5);
+      scene.add(rail);
+    }
+  }
+
+  const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  for (let i = 0; i < 6; i += 1) {
+    const cloud = new THREE.Group();
+    for (let n = 0; n < 3; n += 1) {
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(0.7 + Math.random() * 0.4, 10, 10), cloudMat);
+      puff.position.set(n * 0.7, Math.random() * 0.2, (Math.random() - 0.5) * 0.4);
+      cloud.add(puff);
+    }
+    cloud.position.set(-10 + i * 5, 8 + (i % 3), -12 - (i % 2) * 3);
+    cloud.userData.drift = 0.12 + i * 0.02;
+    scene.add(cloud);
+    scene.userData.clouds = scene.userData.clouds || [];
+    scene.userData.clouds.push(cloud);
+  }
+}
+
+class Game {
+  constructor() {
+    this.state = loadSave();
+    this.sfx = createSfx();
+    this.clock = new THREE.Clock();
+    this.coins = [];
+    this.charging = false;
+    this.charge = 0;
+    this.chargeMemory = 0;
+    this.height = 0;
+    this.peakHeight = 0;
+    this.velocity = 0;
+    this.airborne = false;
+    this.squash = 1;
+    this.combo = 0;
+    this.displayMoney = this.state.money;
+    this.toastTimer = 0;
+    this.flashTimer = 0;
+    this.ready = false;
+    this.blocked = true;
+  }
+
+  async start() {
+    this.blocked = true;
+    ui.title.hidden = true;
+    ui.loader.hidden = false;
+    ui.loadFill.style.width = "18%";
+    this.sfx.unlock();
+    await this.setupScene();
+    ui.loadFill.style.width = "55%";
+    await this.loadCow();
+    ui.loadFill.style.width = "100%";
+    this.buildShop();
+    this.refreshHud();
+    ui.loader.hidden = true;
+    ui.hud.hidden = false;
+    this.blocked = false;
+    this.ready = true;
+    this.tick();
+  }
+
+  async setupScene() {
+    const canvas = $("stage");
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setClearColor(0x8fd3ea);
+    this.renderer.shadowMap.enabled = true;
+
+    this.scene = new THREE.Scene();
+    this.scene.fog = new THREE.Fog(0x8fd3ea, 18, 48);
+
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 80);
+    this.camera.position.set(4.2, 2.55, 5.5);
+
+    const hemi = new THREE.HemisphereLight(0xc8e9ff, 0x4d7a30, 1.1);
+    this.scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xfff1c8, 1.35);
+    sun.position.set(8, 14, 6);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.left = -12;
+    sun.shadow.camera.right = 12;
+    sun.shadow.camera.top = 12;
+    sun.shadow.camera.bottom = -12;
+    this.scene.add(sun);
+
+    buildWorld(this.scene);
+    this.trampoline = buildTrampoline();
+    this.scene.add(this.trampoline);
+
+    this.cowRig = new THREE.Group();
+    this.cowRig.position.y = 0.64;
+    this.scene.add(this.cowRig);
+
+    this.shadowBlob = new THREE.Mesh(
+      new THREE.CircleGeometry(0.55, 16),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22 })
+    );
+    this.shadowBlob.rotation.x = -Math.PI / 2;
+    this.shadowBlob.position.y = 0.02;
+    this.scene.add(this.shadowBlob);
+
+    window.addEventListener("resize", () => this.resize());
+    this.bindInput();
+  }
+
+  async loadCow() {
+    try {
+      const loader = new FBXLoader();
+      const model = await loader.loadAsync(COW_PATH);
+      hardenCowMaterials(model);
+      this.cow = fitCow(model);
+      this.cow.rotation.y = Math.PI * 0.2;
+    } catch (err) {
+      console.warn("Could not load 38-lp_cow FBX, using fallback cow.", err);
+      this.cow = makeFallbackCow();
+    }
+    this.cowRig.add(this.cow);
+  }
+
+  bindInput() {
+    const down = (event) => {
+      if (event.target.closest("button") || event.target.closest(".overlay")) return;
+      if (this.blocked || this.airborne) return;
+      event.preventDefault();
+      this.charging = true;
+    };
+    const up = (event) => {
+      if (!this.charging) return;
+      if (event.target.closest("button") || event.target.closest(".overlay")) {
+        this.charging = false;
+        this.charge = 0;
+        return;
+      }
+      event.preventDefault();
+      this.launch();
+    };
+
+    window.addEventListener("pointerdown", down);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("keydown", (event) => {
+      if (event.code === "Escape") this.closeShop();
+      if (event.code === "KeyS") this.openShop();
+      if (event.code !== "Space") return;
+      if (this.blocked || this.airborne) return;
+      event.preventDefault();
+      this.charging = true;
+    });
+    window.addEventListener("keyup", (event) => {
+      if (event.code !== "Space") return;
+      event.preventDefault();
+      if (this.charging) this.launch();
+    });
+  }
+
+  launch() {
+    if (this.blocked || this.airborne) {
+      this.charging = false;
+      return;
+    }
+    const power = 0.28 + this.charge * 0.72;
+    this.velocity = 6.2 + power * 9.4;
+    this.airborne = true;
+    this.charging = false;
+    this.charge = 0;
+    this.squash = 1.18;
+    this.sfx.launch();
+    if (Math.random() < 0.28) this.sfx.moo();
+    ui.hint.textContent = "Here she goes.";
+  }
+
+  land() {
+    this.airborne = false;
+    this.height = 0;
+    this.velocity = 0;
+    this.squash = 0.72;
+    this.trampoline.userData.bed.scale.y = 0.35;
+    this.state.jumps += 1;
+
+    const peak = this.peakHeight || 1;
+    const good = peak > 2.4;
+    this.combo = good ? this.combo + 1 : 0;
+    const payout = Math.max(1, Math.round(peak * 6 + this.combo * 4 + this.chargeMemory * 12));
+    this.state.money += payout;
+    save(this.state);
+    this.sfx.land();
+    this.sfx.coins();
+    this.burstCoins(4 + Math.min(10, Math.round(peak)));
+    this.showPayout(payout);
+    this.refreshHud(true);
+    ui.hint.textContent = good ? "Hold again. The money still does nothing." : "Hold to squash. Let go to launch.";
+  }
+
+  burstCoins(count) {
+    const gold = new THREE.MeshStandardMaterial({ color: 0xf3c43a, metalness: 0.55, roughness: 0.3 });
+    for (let i = 0; i < count; i += 1) {
+      const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 12), gold);
+      coin.rotation.x = Math.PI / 2;
+      coin.position.set((Math.random() - 0.5) * 0.8, 1.2 + this.height * 0.05, (Math.random() - 0.5) * 0.8);
+      coin.userData.v = new THREE.Vector3((Math.random() - 0.5) * 3, 4 + Math.random() * 3, (Math.random() - 0.5) * 3);
+      coin.userData.life = 1;
+      this.scene.add(coin);
+      this.coins.push(coin);
+    }
+  }
+
+  showPayout(amount) {
+    ui.payout.hidden = false;
+    ui.payout.textContent = `+${formatMoney(amount)}`;
+    if (this.combo > 1) {
+      ui.combo.hidden = false;
+      ui.combo.textContent = `MOO x${this.combo}`;
+    } else {
+      ui.combo.hidden = true;
+    }
+    this.flashTimer = 1.1;
+  }
+
+  doNothing(fromShop = false) {
+    this.state.attempts += 1;
+    save(this.state);
+    this.sfx.nope();
+    const extra = this.state.attempts > 8
+      ? " You have now tried this several times."
+      : "";
+    const line = fromShop && Math.random() < 0.2
+      ? "Checkout complete: you still have the same money."
+      : NOTHING_LINES[this.state.attempts % NOTHING_LINES.length];
+    this.say(line + extra);
+    this.refreshHud();
+  }
+
+  say(text) {
+    ui.toast.hidden = false;
+    ui.toast.textContent = text;
+    this.toastTimer = 2.4;
+  }
+
+  buildShop() {
+    ui.shopList.innerHTML = "";
+    SHOP.forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "shop-item";
+      li.innerHTML = `
+        <div>
+          <h3>${item.name}</h3>
+          <p>${item.blurb}</p>
+        </div>
+        <span class="price">${formatMoney(item.price)}</span>
+      `;
+      const btn = document.createElement("button");
+      btn.className = "buy-btn";
+      btn.type = "button";
+      btn.textContent = "Buy";
+      btn.addEventListener("click", () => {
+        if (this.state.money < item.price) {
+          this.sfx.nope();
+          this.say("You do not have enough useless money yet. Keep bouncing.");
+          return;
+        }
+        btn.classList.add("busy");
+        btn.textContent = "…";
+        setTimeout(() => {
+          btn.classList.remove("busy");
+          btn.textContent = "Buy";
+          this.doNothing(true);
+        }, 280);
+      });
+      li.appendChild(btn);
+      ui.shopList.appendChild(li);
+    });
+  }
+
+  openShop() {
+    if (!this.ready) return;
+    this.charging = false;
+    this.blocked = true;
+    ui.shop.hidden = false;
+    ui.shopMoney.textContent = formatMoney(this.state.money);
+  }
+
+  closeShop() {
+    ui.shop.hidden = true;
+    if (this.ready) this.blocked = false;
+  }
+
+  refreshHud(pop = false) {
+    ui.jumpCount.textContent = `${this.state.jumps} jump${this.state.jumps === 1 ? "" : "s"}`;
+    ui.spentCount.textContent = "$0 spent";
+    ui.shopMoney.textContent = formatMoney(this.state.money);
+    if (pop) ui.moneyBtn.classList.add("pop");
+    setTimeout(() => ui.moneyBtn.classList.remove("pop"), 280);
+  }
+
+  resize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h);
+  }
+
+  tick() {
+    const dt = Math.min(0.033, this.clock.getDelta());
+    this.updatePhysics(dt);
+    this.updateCoins(dt);
+    this.updateUi(dt);
+    this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.55 + this.height * 0.2, 0.08);
+    this.camera.lookAt(0, 1.05 + this.height * 0.28, 0);
+    (this.scene.userData.clouds || []).forEach((cloud) => {
+      cloud.position.x += cloud.userData.drift * dt;
+      if (cloud.position.x > 16) cloud.position.x = -16;
+    });
+    this.renderer.render(this.scene, this.camera);
+    requestAnimationFrame(() => this.tick());
+  }
+
+  updatePhysics(dt) {
+    if (!this.cow) return;
+
+    if (this.charging && !this.airborne) {
+      this.charge = Math.min(1, this.charge + dt * 0.85);
+      this.chargeMemory = this.charge;
+      this.squash = 1 - this.charge * 0.28;
+      this.trampoline.userData.bed.scale.y = 1 - this.charge * 0.55;
+      if (Math.random() < 0.2) this.sfx.charge(this.charge);
+    } else if (!this.airborne) {
+      this.squash += (1 - this.squash) * 8 * dt;
+      this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 8 * dt;
+    }
+
+    if (this.airborne) {
+      this.velocity -= 18 * dt;
+      this.height += this.velocity * dt;
+      if (this.height > (this.peakHeight || 0)) this.peakHeight = this.height;
+      this.squash += (1 - this.squash) * 6 * dt;
+      this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 6 * dt;
+      if (this.height <= 0 && this.velocity <= 0) {
+        this.peakHeight = this.peakHeight || 0.8;
+        this.land();
+        this.peakHeight = 0;
+      }
+    }
+
+    const wobble = this.airborne ? Math.sin(this.clock.elapsedTime * 8) * 0.08 : 0;
+    const idle = !this.airborne && !this.charging ? Math.sin(this.clock.elapsedTime * 2.2) * 0.03 : 0;
+    this.cowRig.position.y = 0.64 + Math.max(0, this.height) + idle;
+    this.cowRig.scale.set(1 + (1 - this.squash) * 0.35, this.squash, 1 + (1 - this.squash) * 0.35);
+    this.cow.rotation.z = wobble;
+    const shadowScale = Math.max(0.25, 1 - this.height * 0.12);
+    this.shadowBlob.scale.setScalar(shadowScale);
+    this.shadowBlob.material.opacity = 0.24 * shadowScale;
+  }
+
+  updateCoins(dt) {
+    for (let i = this.coins.length - 1; i >= 0; i -= 1) {
+      const coin = this.coins[i];
+      coin.userData.v.y -= 12 * dt;
+      coin.position.addScaledVector(coin.userData.v, dt);
+      coin.rotation.y += dt * 8;
+      coin.userData.life -= dt * 0.7;
+      coin.material.transparent = true;
+      coin.material.opacity = Math.max(0, coin.userData.life);
+      if (coin.userData.life <= 0) {
+        this.scene.remove(coin);
+        this.coins.splice(i, 1);
+      }
+    }
+  }
+
+  updateUi(dt) {
+    ui.chargeFill.style.width = `${Math.round(this.charge * 100)}%`;
+    this.displayMoney += (this.state.money - this.displayMoney) * Math.min(1, dt * 10);
+    ui.moneyValue.textContent = Math.floor(this.displayMoney + 0.001).toLocaleString("en-US");
+    if (this.toastTimer > 0) {
+      this.toastTimer -= dt;
+      if (this.toastTimer <= 0) ui.toast.hidden = true;
+    }
+    if (this.flashTimer > 0) {
+      this.flashTimer -= dt;
+      if (this.flashTimer <= 0) {
+        ui.combo.hidden = true;
+        ui.payout.hidden = true;
+      }
+    }
+  }
+}
+
+const game = new Game();
+ui.startBtn.addEventListener("click", () => game.start());
+const params = new URLSearchParams(location.search);
+if (params.has("play")) {
+  game.start();
+}
+ui.shopBtn.addEventListener("click", () => game.openShop());
+ui.closeShop.addEventListener("click", () => game.closeShop());
+ui.moneyBtn.addEventListener("click", () => game.doNothing());
+ui.useMoneyBtn.addEventListener("click", () => game.doNothing());

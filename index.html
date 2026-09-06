@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CASH COW — Jump. Earn. Do nothing.</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐄</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="game">
+    <canvas id="stage"></canvas>
+
+    <div id="hud" hidden>
+      <header class="topbar">
+        <button id="money-btn" class="money-pill" type="button" title="You can do nothing with this">
+          <span class="money-icon">$</span>
+          <span id="money-value">0</span>
+        </button>
+        <p class="stats">
+          <span id="jump-count">0 jumps</span>
+          <span class="dot">·</span>
+          <span id="spent-count">$0 spent</span>
+        </p>
+        <button id="shop-btn" class="wood-btn" type="button">Barn Mart</button>
+      </header>
+
+      <div id="combo" class="combo" hidden></div>
+      <div id="payout" class="payout" hidden></div>
+
+      <div class="charge-wrap">
+        <p id="hint" class="hint">Hold to squash. Let go to launch.</p>
+        <div class="charge-track" aria-hidden="true">
+          <div id="charge-fill" class="charge-fill"></div>
+        </div>
+      </div>
+
+      <button id="use-money-btn" class="use-money" type="button">Use money</button>
+    </div>
+
+    <div id="title" class="overlay title-screen">
+      <div class="title-card">
+        <p class="eyebrow">a financially inert experience</p>
+        <h1>CASH COW</h1>
+        <p class="tagline">A cow. A trampoline. Money you can do nothing with.</p>
+        <button id="start-btn" class="wood-btn big" type="button">Start bouncing</button>
+        <p class="fineprint">Featuring the low-poly cow from <code>38-lp_cow</code>.</p>
+      </div>
+    </div>
+
+    <div id="loader" class="overlay loader" hidden>
+      <p>Loading the cow…</p>
+      <div class="charge-track">
+        <div id="load-fill" class="charge-fill"></div>
+      </div>
+    </div>
+
+    <div id="shop" class="overlay shop" hidden>
+      <div class="shop-card">
+        <header class="shop-head">
+          <div>
+            <p class="eyebrow">est. never · no refunds · no products</p>
+            <h2>The Barn Mart</h2>
+          </div>
+          <button id="close-shop" class="wood-btn" type="button">Back to bouncing</button>
+        </header>
+        <p class="shop-intro">
+          You have <strong id="shop-money">$0</strong>.
+          Every shelf is fully stocked with things you cannot have.
+        </p>
+        <ul id="shop-list" class="shop-list"></ul>
+        <p class="shop-foot">This is not a shop. This is a place to look at numbers.</p>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
