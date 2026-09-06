@@ -90,6 +90,11 @@ button:focus {
   animation: pop 280ms ease;
 }
 
+.money-pill.bust {
+  animation: bust 520ms ease;
+  background: linear-gradient(#d8d8d8, #9a9a9a);
+}
+
 .money-icon {
   display: grid;
   place-items: center;
@@ -160,6 +165,12 @@ button:focus {
   top: 22%;
   color: #fff;
   font-size: clamp(36px, 6vw, 72px);
+}
+
+.combo.casual {
+  color: #ffe7c2;
+  font-size: clamp(48px, 8vw, 92px);
+  letter-spacing: 0.04em;
 }
 
 .payout {
@@ -388,6 +399,12 @@ h2 {
 
 @keyframes pop {
   50% { transform: scale(1.08); }
+}
+
+@keyframes bust {
+  25% { transform: translateX(-6px) rotate(-3deg); }
+  50% { transform: translateX(6px) rotate(3deg); }
+  75% { transform: translateX(-3px) rotate(-1deg); }
 }
 
 @media (max-width: 720px) {

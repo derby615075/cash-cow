@@ -135,6 +135,15 @@ function createSfx() {
       beep(180, 0.12, "square", 0.05);
       setTimeout(() => beep(120, 0.18, "square", 0.05), 90);
     },
+    flip() {
+      beep(260, 0.1, "triangle", 0.05);
+      setTimeout(() => beep(420, 0.14, "sine", 0.04), 80);
+    },
+    explode() {
+      beep(70, 0.22, "sine", 0.07);
+      setTimeout(() => beep(48, 0.35, "triangle", 0.05), 90);
+      setTimeout(() => beep(110, 0.12, "square", 0.03), 180);
+    },
   };
 }
 
@@ -397,6 +406,14 @@ class Game {
     this.flashTimer = 0;
     this.ready = false;
     this.blocked = true;
+    this.airTaps = 0;
+    this.flipping = false;
+    this.flipAngle = 0;
+    this.exploding = false;
+    this.respawnTimer = 0;
+    this.shake = 0;
+    this.debris = [];
+    this.flipMid = 0.7;
   }
 
   async start() {
@@ -475,7 +492,12 @@ class Game {
       console.warn("Could not load 38-lp_cow FBX, using fallback cow.", err);
       this.cow = makeFallbackCow();
     }
-    this.cowRig.add(this.cow);
+    this.flipMid = (this.cow.userData.size?.y || 1.4) * 0.48;
+    this.flipGroup = new THREE.Group();
+    this.flipGroup.position.y = this.flipMid;
+    this.cow.position.y -= this.flipMid;
+    this.cowRig.add(this.flipGroup);
+    this.flipGroup.add(this.cow);
   }
 
   bindInput() {
@@ -503,8 +525,12 @@ class Game {
       if (event.code === "Escape") this.closeShop();
       if (event.code === "KeyS") this.openShop();
       if (event.code !== "Space") return;
-      if (this.blocked || this.airborne) return;
       event.preventDefault();
+      if (event.repeat || this.blocked || this.exploding) return;
+      if (this.airborne) {
+        this.airTap();
+        return;
+      }
       this.charging = true;
     });
     window.addEventListener("keyup", (event) => {
@@ -525,31 +551,119 @@ class Game {
     this.charging = false;
     this.charge = 0;
     this.squash = 1.18;
+    this.airTaps = 0;
+    this.flipping = false;
+    this.flipAngle = 0;
+    if (this.flipGroup) this.flipGroup.rotation.x = 0;
     this.sfx.launch();
     if (Math.random() < 0.28) this.sfx.moo();
-    ui.hint.textContent = "Here she goes.";
+    ui.hint.textContent = "Space twice in the air for a backflip.";
+  }
+
+  airTap() {
+    if (this.flipping) return;
+    this.airTaps += 1;
+    if (this.airTaps === 1) {
+      ui.hint.textContent = "Once more…";
+      return;
+    }
+    this.startFlip();
+  }
+
+  startFlip() {
+    this.flipping = true;
+    this.sfx.flip();
+    ui.hint.textContent = "Backflip. Land on your feet.";
+    ui.combo.hidden = false;
+    ui.combo.textContent = "BACKFLIP";
+    this.flashTimer = 0.9;
+  }
+
+  isUpright() {
+    const turn = ((this.flipAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    return Math.min(turn, Math.PI * 2 - turn) < 0.5;
   }
 
   land() {
+    const stuckTheFlip = this.flipping && this.isUpright();
     this.airborne = false;
     this.height = 0;
     this.velocity = 0;
     this.squash = 0.72;
+    this.airTaps = 0;
+    this.flipping = false;
+    this.flipAngle = 0;
+    if (this.flipGroup) this.flipGroup.rotation.x = 0;
     this.trampoline.userData.bed.scale.y = 0.35;
     this.state.jumps += 1;
 
     const peak = this.peakHeight || 1;
-    const good = peak > 2.4;
+    const good = peak > 2.4 || stuckTheFlip;
     this.combo = good ? this.combo + 1 : 0;
-    const payout = Math.max(1, Math.round(peak * 6 + this.combo * 4 + this.chargeMemory * 12));
+    const payout = Math.max(1, Math.round(peak * 6 + this.combo * 4 + this.chargeMemory * 12 + (stuckTheFlip ? 25 : 0)));
     this.state.money += payout;
     save(this.state);
     this.sfx.land();
     this.sfx.coins();
-    this.burstCoins(4 + Math.min(10, Math.round(peak)));
-    this.showPayout(payout);
+    this.burstCoins(4 + Math.min(10, Math.round(peak)) + (stuckTheFlip ? 6 : 0));
+    this.showPayout(payout, stuckTheFlip);
     this.refreshHud(true);
-    ui.hint.textContent = good ? "Hold again. The money still does nothing." : "Hold to squash. Let go to launch.";
+    ui.hint.textContent = stuckTheFlip
+      ? "Feet first. Hold again, if you dare."
+      : "Hold to squash. Space twice in the air for a backflip.";
+  }
+
+  explode() {
+    const lost = this.state.money;
+    this.exploding = true;
+    this.blocked = true;
+    this.airborne = false;
+    this.flipping = false;
+    this.charging = false;
+    this.charge = 0;
+    this.airTaps = 0;
+    this.velocity = 0;
+    this.height = 0;
+    this.combo = 0;
+    this.shake = 0.28;
+    this.cow.visible = false;
+    this.shadowBlob.visible = false;
+    this.trampoline.userData.bed.scale.y = 0.25;
+    this.state.money = 0;
+    save(this.state);
+    this.sfx.explode();
+    this.spawnDebris();
+    this.refreshHud();
+    ui.moneyBtn.classList.add("bust");
+    ui.combo.hidden = false;
+    ui.combo.classList.add("casual");
+    ui.combo.textContent = "oh.";
+    ui.payout.hidden = false;
+    ui.payout.textContent = lost > 0 ? `−${formatMoney(lost)}` : "$0 anyway";
+    this.flashTimer = 2;
+    this.say(lost > 0
+      ? `She landed wrong and casually exploded. ${formatMoney(lost)} reset.`
+      : "She exploded. There was no money, which is almost ruder.");
+    ui.hint.textContent = "A cow-shaped pause.";
+    this.respawnTimer = 1.9;
+  }
+
+  respawn() {
+    this.clearDebris();
+    this.cow.visible = true;
+    this.shadowBlob.visible = true;
+    this.flipAngle = 0;
+    if (this.flipGroup) this.flipGroup.rotation.set(0, 0, 0);
+    this.squash = 1;
+    this.exploding = false;
+    this.blocked = false;
+    this.displayMoney = 0;
+    ui.moneyBtn.classList.remove("bust");
+    ui.combo.classList.remove("casual");
+    ui.combo.hidden = true;
+    ui.payout.hidden = true;
+    ui.hint.textContent = "Hold to squash. Maybe stick the landing this time.";
+    this.refreshHud();
   }
 
   burstCoins(count) {
@@ -565,16 +679,84 @@ class Game {
     }
   }
 
-  showPayout(amount) {
+  showPayout(amount, stuckTheFlip = false) {
     ui.payout.hidden = false;
     ui.payout.textContent = `+${formatMoney(amount)}`;
-    if (this.combo > 1) {
+    if (stuckTheFlip) {
+      ui.combo.hidden = false;
+      ui.combo.textContent = "STUCK IT";
+    } else if (this.combo > 1) {
       ui.combo.hidden = false;
       ui.combo.textContent = `MOO x${this.combo}`;
     } else {
       ui.combo.hidden = true;
     }
     this.flashTimer = 1.1;
+  }
+
+  spawnDebris() {
+    this.clearDebris();
+    const colors = [0xf4e1c1, 0x6a3a1c, 0x2b2b2b, 0xe59aa3, 0xf7f1e3, 0xf3c43a];
+    const origin = new THREE.Vector3(0, 0.9, 0);
+    for (let i = 0; i < 18; i += 1) {
+      const chunk = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12 + Math.random() * 0.2, 0.1 + Math.random() * 0.16, 0.1 + Math.random() * 0.16),
+        new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.7 })
+      );
+      chunk.position.copy(origin);
+      chunk.position.x += (Math.random() - 0.5) * 0.3;
+      chunk.position.z += (Math.random() - 0.5) * 0.3;
+      chunk.userData.v = new THREE.Vector3((Math.random() - 0.5) * 2.2, 2.2 + Math.random() * 2.4, (Math.random() - 0.5) * 2.2);
+      chunk.userData.spin = new THREE.Vector3(Math.random() * 4, Math.random() * 4, Math.random() * 4);
+      chunk.userData.life = 1.6;
+      chunk.castShadow = true;
+      this.scene.add(chunk);
+      this.debris.push(chunk);
+    }
+    for (let i = 0; i < 7; i += 1) {
+      const puff = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xf3efe4, transparent: true, opacity: 0.45, roughness: 1 })
+      );
+      puff.position.set((Math.random() - 0.5) * 0.4, 0.8, (Math.random() - 0.5) * 0.4);
+      puff.userData.v = new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.8 + Math.random() * 0.5, (Math.random() - 0.5) * 0.6);
+      puff.userData.spin = new THREE.Vector3();
+      puff.userData.life = 1.1;
+      puff.userData.puff = true;
+      this.scene.add(puff);
+      this.debris.push(puff);
+    }
+  }
+
+  clearDebris() {
+    this.debris.forEach((piece) => this.scene.remove(piece));
+    this.debris = [];
+  }
+
+  updateDebris(dt) {
+    for (let i = this.debris.length - 1; i >= 0; i -= 1) {
+      const piece = this.debris[i];
+      piece.userData.v.y -= (piece.userData.puff ? 3 : 11) * dt;
+      piece.position.addScaledVector(piece.userData.v, dt);
+      piece.rotation.x += piece.userData.spin.x * dt;
+      piece.rotation.y += piece.userData.spin.y * dt;
+      if (piece.position.y < 0.08) {
+        piece.position.y = 0.08;
+        piece.userData.v.y *= -0.18;
+        piece.userData.v.x *= 0.7;
+        piece.userData.v.z *= 0.7;
+      }
+      piece.userData.life -= dt;
+      if (piece.material) {
+        piece.material.transparent = true;
+        piece.material.opacity = Math.max(0, piece.userData.puff ? piece.userData.life : piece.userData.life * 0.7);
+      }
+      if (piece.userData.puff) piece.scale.addScalar(dt * 1.4);
+      if (piece.userData.life <= 0) {
+        this.scene.remove(piece);
+        this.debris.splice(i, 1);
+      }
+    }
   }
 
   doNothing(fromShop = false) {
@@ -663,10 +845,19 @@ class Game {
 
   tick() {
     const dt = Math.min(0.033, this.clock.getDelta());
+    if (this.respawnTimer > 0) {
+      this.respawnTimer -= dt;
+      if (this.respawnTimer <= 0) this.respawn();
+    }
     this.updatePhysics(dt);
     this.updateCoins(dt);
+    this.updateDebris(dt);
     this.updateUi(dt);
-    this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.55 + this.height * 0.2, 0.08);
+    const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.35 : 0;
+    const shakeY = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.2 : 0;
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
+    this.camera.position.x = 4.2 + shakeX;
+    this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.55 + this.height * 0.2, 0.08) + shakeY;
     this.camera.lookAt(0, 1.05 + this.height * 0.28, 0);
     (this.scene.userData.clouds || []).forEach((cloud) => {
       cloud.position.x += cloud.userData.drift * dt;
@@ -690,20 +881,31 @@ class Game {
       this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 8 * dt;
     }
 
+    if (this.exploding) {
+      this.squash += (1 - this.squash) * 4 * dt;
+      this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 4 * dt;
+      return;
+    }
+
     if (this.airborne) {
       this.velocity -= 18 * dt;
       this.height += this.velocity * dt;
       if (this.height > (this.peakHeight || 0)) this.peakHeight = this.height;
       this.squash += (1 - this.squash) * 6 * dt;
       this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 6 * dt;
+      if (this.flipping && this.flipGroup) {
+        this.flipAngle += 8.6 * dt;
+        this.flipGroup.rotation.x = -this.flipAngle;
+      }
       if (this.height <= 0 && this.velocity <= 0) {
         this.peakHeight = this.peakHeight || 0.8;
-        this.land();
+        if (this.flipping && !this.isUpright()) this.explode();
+        else this.land();
         this.peakHeight = 0;
       }
     }
 
-    const wobble = this.airborne ? Math.sin(this.clock.elapsedTime * 8) * 0.08 : 0;
+    const wobble = this.airborne && !this.flipping ? Math.sin(this.clock.elapsedTime * 8) * 0.08 : 0;
     const idle = !this.airborne && !this.charging ? Math.sin(this.clock.elapsedTime * 2.2) * 0.03 : 0;
     this.cowRig.position.y = 0.64 + Math.max(0, this.height) + idle;
     this.cowRig.scale.set(1 + (1 - this.squash) * 0.35, this.squash, 1 + (1 - this.squash) * 0.35);
