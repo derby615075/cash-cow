@@ -1975,7 +1975,7 @@ class Game {
   refreshBirdsHud() {
     ui.birdsScore.textContent = Math.floor(this.birdsScore).toLocaleString("en-US");
     ui.birdsShots.textContent = String(Math.max(0, this.birdsShots));
-    ui.birdsCoins.textContent = formatMoney(Math.floor(this.birdsScore / 10000));
+    ui.birdsCoins.textContent = formatMoney(Math.floor(this.birdsScore / 500));
   }
 
   updateAngryCow(dt) {
@@ -2105,7 +2105,7 @@ class Game {
 
   endAngryCow() {
     if (!this.birdsMode) return;
-    const coins = Math.floor(this.birdsScore / 10000);
+    const coins = Math.floor(this.birdsScore / 500);
     this.state.money += coins;
     save(this.state);
     this.displayMoney = this.state.money;
@@ -2129,7 +2129,7 @@ class Game {
       : "Broadcast over. Not enough points for even one coin.";
     this.say(coins
       ? `${this.birdsScore.toLocaleString("en-US")} points becomes ${formatMoney(coins)}. You still cannot spend it.`
-      : `${this.birdsScore.toLocaleString("en-US")} points. Need 10,000 for $1.`);
+      : `${this.birdsScore.toLocaleString("en-US")} points. Need 500 for $1.`);
   }
 
   updatePhysics(dt) {
