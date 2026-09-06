@@ -455,6 +455,8 @@ class Game {
     this.fartTime = 0;
     this.fartEmit = 0;
     this.spaceDeath = false;
+    this.barrelRolling = false;
+    this.barrelAngle = 0;
   }
 
   async start() {
@@ -574,6 +576,11 @@ class Game {
         if (!event.repeat) this.fartLaunch();
         return;
       }
+      if (event.code === "KeyB") {
+        event.preventDefault();
+        if (!event.repeat) this.barrelRoll();
+        return;
+      }
       if (event.code !== "Space") return;
       event.preventDefault();
       if (event.repeat || this.blocked || this.exploding || this.farting) return;
@@ -629,6 +636,14 @@ class Game {
     this.flashTimer = 0.9;
   }
 
+  barrelRoll() {
+    if (this.blocked || this.exploding || this.barrelRolling) return;
+    this.barrelRolling = true;
+    this.barrelAngle = 0;
+    this.sfx.flip();
+    this.say("Do a barrel roll!");
+  }
+
   isUpright() {
     const turn = ((this.flipAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     return Math.min(turn, Math.PI * 2 - turn) < 0.5;
@@ -672,6 +687,8 @@ class Game {
     this.charging = false;
     this.charge = 0;
     this.airTaps = 0;
+    this.barrelRolling = false;
+    this.barrelAngle = 0;
     this.velocity = 0;
     this.height = 0;
     this.combo = 0;
@@ -708,6 +725,8 @@ class Game {
     this.cowRig.rotation.set(0, 0, 0);
     this.cowRig.scale.set(1, 1, 1);
     this.flipAngle = 0;
+    this.barrelRolling = false;
+    this.barrelAngle = 0;
     if (this.flipGroup) this.flipGroup.rotation.set(0, 0, 0);
     this.height = 0;
     this.velocity = 0;
@@ -1020,6 +1039,17 @@ class Game {
 
   updatePhysics(dt) {
     if (!this.cow) return;
+
+    if (this.barrelRolling && this.flipGroup) {
+      this.barrelAngle += 10.5 * dt;
+      if (this.barrelAngle >= Math.PI * 2) {
+        this.barrelAngle = 0;
+        this.barrelRolling = false;
+        this.flipGroup.rotation.z = 0;
+      } else {
+        this.flipGroup.rotation.z = this.barrelAngle;
+      }
+    }
 
     if (this.charging && !this.airborne) {
       this.charge = Math.min(1, this.charge + dt * 0.85);
