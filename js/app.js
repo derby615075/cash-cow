@@ -542,7 +542,61 @@ function makeFruit() {
   leaf.position.y = 0.22 * kind.squash;
   fruit.add(leaf);
   fruit.castShadow = true;
+  fruit.userData.color = kind.color;
   return fruit;
+}
+
+function makeFruitBit(color) {
+  const flesh = new THREE.Color(color);
+  const rind = flesh.clone().offsetHSL(0, 0.05, 0.12);
+  const roll = Math.random();
+  let mesh;
+  if (roll < 0.22) {
+    mesh = new THREE.Mesh(
+      new THREE.TetrahedronGeometry(0.09 + Math.random() * 0.07),
+      new THREE.MeshStandardMaterial({ color: flesh, roughness: 0.55 })
+    );
+  } else if (roll < 0.42) {
+    mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08 + Math.random() * 0.1, 0.05 + Math.random() * 0.07, 0.07 + Math.random() * 0.08),
+      new THREE.MeshStandardMaterial({ color: rind, roughness: 0.62 })
+    );
+  } else if (roll < 0.58) {
+    mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045 + Math.random() * 0.04, 6, 5),
+      new THREE.MeshStandardMaterial({ color: flesh, roughness: 0.35, transparent: true, opacity: 0.8 })
+    );
+  } else if (roll < 0.72) {
+    mesh = new THREE.Mesh(
+      new THREE.ConeGeometry(0.06, 0.11, 5),
+      new THREE.MeshStandardMaterial({ color: 0x3d8b2e, roughness: 0.8 })
+    );
+  } else if (roll < 0.82) {
+    mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.035, 6, 5),
+      new THREE.MeshStandardMaterial({ color: 0x3a2212, roughness: 0.7 })
+    );
+  } else if (roll < 0.9) {
+    mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.07, 0.02, 10),
+      new THREE.MeshStandardMaterial({ color: 0xf3c43a, metalness: 0.5, roughness: 0.3 })
+    );
+    mesh.rotation.x = Math.PI / 2;
+  } else {
+    const eye = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25 })
+    );
+    const pupil = new THREE.Mesh(
+      new THREE.SphereGeometry(0.025, 6, 5),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 })
+    );
+    pupil.position.z = 0.04;
+    eye.add(pupil);
+    mesh = eye;
+  }
+  mesh.castShadow = true;
+  return mesh;
 }
 
 function buildCertificate() {
@@ -602,6 +656,7 @@ class Game {
     this.griddyLocked = false;
     this.griddyGrace = 0;
     this.griddyBeat = 0;
+    this.fruitBits = [];
     this.barrelRolling = false;
     this.barrelAngle = 0;
   }
@@ -1120,11 +1175,32 @@ class Game {
     if (this.griddyGrace > 0) this.griddyGrace = Math.max(0, this.griddyGrace - dt);
 
     this.fruits.forEach((fruit) => {
-      fruit.userData.v.y -= fruit.userData.kicked ? 14 * dt : 0;
       fruit.position.addScaledVector(fruit.userData.v, dt);
       fruit.rotation.x += fruit.userData.spin.x * dt;
       fruit.rotation.y += fruit.userData.spin.y * dt;
     });
+    for (let i = this.fruitBits.length - 1; i >= 0; i -= 1) {
+      const bit = this.fruitBits[i];
+      bit.userData.v.y -= 16 * dt;
+      bit.position.addScaledVector(bit.userData.v, dt);
+      bit.rotation.x += bit.userData.spin.x * dt;
+      bit.rotation.y += bit.userData.spin.y * dt;
+      bit.rotation.z += bit.userData.spin.z * dt;
+      if (bit.position.y < 0.06) {
+        bit.position.y = 0.06;
+        bit.userData.v.y *= -0.35;
+        bit.userData.v.x *= 0.72;
+        bit.userData.v.z *= 0.72;
+      }
+      bit.userData.life -= dt;
+      if (bit.material && bit.material.transparent) {
+        bit.material.opacity = Math.max(0, bit.userData.life * 0.6);
+      }
+      if (bit.userData.life <= 0) {
+        this.scene.remove(bit);
+        this.fruitBits.splice(i, 1);
+      }
+    }
 
     if (this.fruitPhase === "incoming") {
       const wind = Math.min(1, this.fruitTime / 0.35);
@@ -1148,11 +1224,8 @@ class Game {
       this.cowRig.rotation.x = Math.sin(k * Math.PI) * 0.35;
       this.cowRig.position.set(k * 0.35, 0.64 + Math.sin(k * Math.PI) * 0.25, 0);
       if (this.fruitTime > 0.16) {
-        this.fruits.forEach((fruit) => {
-          if (fruit.userData.kicked) return;
-          fruit.userData.kicked = true;
-          fruit.userData.v.set(10 + Math.random() * 6, 6 + Math.random() * 4, (Math.random() - 0.5) * 8);
-        });
+        const stillWhole = this.fruits.slice();
+        stillWhole.forEach((fruit) => this.explodeFruit(fruit));
       }
       if (this.fruitTime > 0.7) {
         this.fruitPhase = "griddy";
@@ -1213,9 +1286,39 @@ class Game {
     this.say("The cow returns from the dance dimension.");
   }
 
+  explodeFruit(fruit) {
+    const origin = fruit.position.clone();
+    const color = fruit.userData.color || 0xe23b3b;
+    this.scene.remove(fruit);
+    this.fruits = this.fruits.filter((item) => item !== fruit);
+    const count = 6 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < count; i += 1) {
+      const bit = makeFruitBit(color);
+      bit.position.copy(origin);
+      bit.position.x += (Math.random() - 0.5) * 0.18;
+      bit.position.y += (Math.random() - 0.5) * 0.18;
+      bit.position.z += (Math.random() - 0.5) * 0.18;
+      bit.userData.v = new THREE.Vector3(
+        4 + Math.random() * 9,
+        4 + Math.random() * 7,
+        (Math.random() - 0.5) * 8
+      );
+      bit.userData.spin = new THREE.Vector3(
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14
+      );
+      bit.userData.life = 1.4 + Math.random() * 0.8;
+      this.scene.add(bit);
+      this.fruitBits.push(bit);
+    }
+  }
+
   clearFruits() {
     this.fruits.forEach((fruit) => this.scene.remove(fruit));
+    this.fruitBits.forEach((bit) => this.scene.remove(bit));
     this.fruits = [];
+    this.fruitBits = [];
   }
 
   burstCoins(count) {
