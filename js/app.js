@@ -50,6 +50,10 @@ const ui = {
   combo: $("combo"),
   payout: $("payout"),
   toast: $("toast"),
+  birdsHud: $("birds-hud"),
+  birdsScore: $("birds-score"),
+  birdsShots: $("birds-shots"),
+  birdsCoins: $("birds-coins"),
 };
 
 function loadSave() {
@@ -675,6 +679,16 @@ class Game {
     this.hatePhase = "idle";
     this.hateTime = 0;
     this.hateLight = null;
+    this.birdsMode = false;
+    this.birdsScore = 0;
+    this.birdsShots = 3;
+    this.birdsAiming = false;
+    this.birdsFlying = false;
+    this.birdsBodies = [];
+    this.birdsLevel = null;
+    this.birdsPull = new THREE.Vector2(0, 0);
+    this.birdsWait = 0;
+    this.slingBand = null;
   }
 
   async start() {
@@ -769,11 +783,21 @@ class Game {
     const down = (event) => {
       if (this.stopGriddyIfActive()) return;
       if (event.target.closest("button") || event.target.closest(".overlay")) return;
+      if (this.birdsMode) {
+        event.preventDefault();
+        this.beginBirdsAim(event);
+        return;
+      }
       if (this.blocked || this.airborne || this.fruitMode || this.hatesYou) return;
       event.preventDefault();
       this.charging = true;
     };
     const up = (event) => {
+      if (this.birdsMode && this.birdsAiming) {
+        event.preventDefault();
+        this.releaseBirdsAim();
+        return;
+      }
       if (!this.charging) return;
       if (event.target.closest("button") || event.target.closest(".overlay")) {
         this.charging = false;
@@ -788,11 +812,26 @@ class Game {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     window.addEventListener("pointermove", (event) => {
+      if (this.birdsMode && this.birdsAiming) {
+        this.updateBirdsAim(event);
+        return;
+      }
       if (!this.griddyLocked || this.griddyGrace > 0) return;
       if (Math.abs(event.movementX) + Math.abs(event.movementY) > 4) this.stopGriddy();
     });
     window.addEventListener("keydown", (event) => {
       if (this.stopGriddyIfActive()) {
+        event.preventDefault();
+        return;
+      }
+      const keyEarly = (event.key || "").toLowerCase();
+      if (keyEarly === "y") {
+        event.preventDefault();
+        if (!event.repeat) this.toggleAngryCow();
+        return;
+      }
+      if (this.birdsMode) {
+        if (event.code === "Escape") this.endAngryCow();
         event.preventDefault();
         return;
       }
@@ -1674,7 +1713,11 @@ class Game {
     const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.35 : 0;
     const shakeY = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.2 : 0;
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
-    if (this.farting || this.spaceDeath) {
+    if (this.birdsMode) {
+      const followX = this.birdsFlying && this.cowRig ? this.cowRig.position.x : 1;
+      this.camera.position.set(1.2 + followX * 0.22, 5.4, 15.5);
+      this.camera.lookAt(followX * 0.45 + 1.4, 2.1, 0);
+    } else if (this.farting || this.spaceDeath) {
       this.camera.position.x = 4.2 + shakeX;
       this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.4 + Math.min(this.height * 0.22, 18), 0.12) + shakeY;
       this.camera.lookAt(0, 0.8 + this.height, 0);
@@ -1693,6 +1736,357 @@ class Game {
     requestAnimationFrame(() => this.tick());
   }
 
+  toggleAngryCow() {
+    if (this.birdsMode) {
+      this.endAngryCow();
+      return;
+    }
+    if (this.hatesYou) {
+      this.say("She will not star in your broadcast. Refresh.");
+      return;
+    }
+    if (!this.ready || this.fruitMode || this.farting || this.exploding) return;
+    this.startAngryCow();
+  }
+
+  startAngryCow() {
+    this.charging = false;
+    this.charge = 0;
+    this.holdTime = 0;
+    this.blocked = true;
+    this.birdsMode = true;
+    this.birdsScore = 0;
+    this.birdsShots = 3;
+    this.birdsAiming = false;
+    this.birdsFlying = false;
+    this.birdsWait = 0;
+    this.trampoline.visible = false;
+    this.shadowBlob.visible = false;
+    $("charge-wrap").hidden = true;
+    this.buildBirdsLevel();
+    this.resetBirdOnSling();
+    ui.birdsHud.hidden = false;
+    ui.hint.textContent = "Spectator cam. Drag the cow. Y or Esc to leave.";
+    this.refreshBirdsHud();
+    this.say("A side-view sporting event. The cow did not consent.");
+  }
+
+  buildBirdsLevel() {
+    this.clearBirdsLevel();
+    const level = new THREE.Group();
+    const dirt = new THREE.Mesh(
+      new THREE.BoxGeometry(36, 0.4, 6),
+      new THREE.MeshStandardMaterial({ color: 0x6b4a24, roughness: 1 })
+    );
+    dirt.position.set(2, -0.2, 0);
+    dirt.receiveShadow = true;
+    level.add(dirt);
+    const grass = new THREE.Mesh(
+      new THREE.BoxGeometry(36, 0.08, 6),
+      new THREE.MeshStandardMaterial({ color: 0x4ea53a, roughness: 1 })
+    );
+    grass.position.set(2, 0.02, 0);
+    grass.receiveShadow = true;
+    level.add(grass);
+
+    const wood = new THREE.MeshStandardMaterial({ color: 0x8a4b1f, roughness: 0.75 });
+    const postA = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.8, 8), wood);
+    postA.position.set(-7.45, 0.9, 0.18);
+    const postB = postA.clone();
+    postB.position.set(-6.95, 0.9, -0.18);
+    level.add(postA, postB);
+
+    const bandGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-7.45, 1.55, 0.18),
+      new THREE.Vector3(-7.2, 1.35, 0),
+      new THREE.Vector3(-6.95, 1.55, -0.18),
+    ]);
+    this.slingBand = new THREE.Line(bandGeo, new THREE.LineBasicMaterial({ color: 0x5c2e0e, linewidth: 2 }));
+    level.add(this.slingBand);
+
+    this.birdsLevel = level;
+    this.scene.add(level);
+    this.birdsBodies = [];
+
+    const stack = [
+      [4.1, 0.38, "crate"], [4.1, 1.14, "crate"], [4.1, 1.9, "pig"],
+      [6.3, 0.38, "crate"], [5.7, 1.14, "crate"], [6.9, 1.14, "crate"], [6.3, 1.9, "crate"], [6.3, 2.66, "pig"],
+      [8.8, 0.38, "crate"], [8.8, 1.14, "pig"],
+    ];
+    stack.forEach(([x, y, kind]) => {
+      this.birdsBodies.push(kind === "pig" ? this.makeBirdsPig(x, y) : this.makeBirdsCrate(x, y));
+    });
+  }
+
+  makeBirdsCrate(x, y) {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.72, 0.72, 0.72),
+      new THREE.MeshStandardMaterial({ color: 0xc48a4a, roughness: 0.7 })
+    );
+    mesh.position.set(x, y, 0);
+    mesh.castShadow = true;
+    this.birdsLevel.add(mesh);
+    return { kind: "crate", mesh, x, y, vx: 0, vy: 0, r: 0.38, mass: 1.1, scored: false };
+  }
+
+  makeBirdsPig(x, y) {
+    const pig = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(0.32, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0x7dce3a, roughness: 0.55 })
+    );
+    const snout = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0x5aaa28, roughness: 0.5 })
+    );
+    snout.position.set(-0.28, 0, 0.12);
+    pig.add(body, snout);
+    pig.position.set(x, y, 0);
+    this.birdsLevel.add(pig);
+    return { kind: "pig", mesh: pig, x, y, vx: 0, vy: 0, r: 0.32, mass: 0.8, scored: false, popped: false };
+  }
+
+  resetBirdOnSling() {
+    this.birdsFlying = false;
+    this.birdsAiming = false;
+    this.birdsPull.set(0, 0);
+    this.cowRig.position.set(-7.2, 1.35, 0);
+    this.cowRig.rotation.set(0, 0, 0);
+    this.cowRig.scale.set(1, 1, 1);
+    if (this.cow) this.cow.rotation.set(0, Math.PI * 0.15, 0);
+    this.updateSlingBand(-7.2, 1.35);
+  }
+
+  updateSlingBand(x, y) {
+    if (!this.slingBand) return;
+    const pos = this.slingBand.geometry.attributes.position;
+    pos.setXYZ(1, x, y, 0);
+    pos.needsUpdate = true;
+  }
+
+  pointerToBirdsPlane(event) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hit = new THREE.Vector3();
+    ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit);
+    return hit;
+  }
+
+  beginBirdsAim(event) {
+    if (this.birdsFlying || this.birdsShots <= 0) return;
+    this.birdsAiming = true;
+    this.updateBirdsAim(event);
+  }
+
+  updateBirdsAim(event) {
+    const hit = this.pointerToBirdsPlane(event);
+    let dx = hit.x + 7.2;
+    let dy = hit.y - 1.35;
+    const len = Math.min(3.15, Math.hypot(dx, dy) || 0.01);
+    const ang = Math.atan2(dy, dx);
+    this.birdsPull.set(Math.cos(ang) * len, Math.sin(ang) * len);
+    const x = -7.2 + this.birdsPull.x;
+    const y = 1.35 + this.birdsPull.y;
+    this.cowRig.position.set(x, y, 0);
+    this.updateSlingBand(x, y);
+  }
+
+  releaseBirdsAim() {
+    if (!this.birdsAiming) return;
+    this.birdsAiming = false;
+    const power = this.birdsPull.length();
+    if (power < 0.28) {
+      this.resetBirdOnSling();
+      return;
+    }
+    this.birdsShots -= 1;
+    this.birdsFlying = true;
+    this.birdsWait = 0;
+    this.birdShot = {
+      kind: "bird",
+      mesh: this.cowRig,
+      x: this.cowRig.position.x,
+      y: this.cowRig.position.y,
+      vx: -this.birdsPull.x * 5.4,
+      vy: -this.birdsPull.y * 5.4,
+      r: 0.42,
+      mass: 1.6,
+    };
+    this.sfx.whoosh();
+    this.sfx.moo();
+    this.refreshBirdsHud();
+    this.updateSlingBand(-7.2, 1.35);
+  }
+
+  addBirdsScore(n) {
+    this.birdsScore += n;
+    this.refreshBirdsHud();
+  }
+
+  refreshBirdsHud() {
+    ui.birdsScore.textContent = Math.floor(this.birdsScore).toLocaleString("en-US");
+    ui.birdsShots.textContent = String(Math.max(0, this.birdsShots));
+    ui.birdsCoins.textContent = formatMoney(Math.floor(this.birdsScore / 10000));
+  }
+
+  updateAngryCow(dt) {
+    if (this.birdsFlying && this.birdShot) {
+      const bird = this.birdShot;
+      bird.vy -= 16 * dt;
+      bird.x += bird.vx * dt;
+      bird.y += bird.vy * dt;
+      if (bird.y < 0.42) {
+        bird.y = 0.42;
+        bird.vy *= -0.32;
+        bird.vx *= 0.78;
+      }
+      this.cowRig.position.set(bird.x, bird.y, 0);
+      this.cowRig.rotation.z -= bird.vx * dt * 0.35;
+      this.resolveBirdsCollisions(bird);
+      const still = Math.hypot(bird.vx, bird.vy) < 0.55;
+      const gone = bird.x > 20 || bird.x < -13 || bird.y > 14;
+      this.birdsWait = still || gone ? this.birdsWait + dt : 0;
+      if (this.birdsWait > 1.15) {
+        this.birdsFlying = false;
+        this.birdShot = null;
+        if (this.birdsShots <= 0 || this.birdsBodies.every((b) => b.kind !== "pig" || b.popped)) {
+          this.endAngryCow();
+          return;
+        }
+        this.resetBirdOnSling();
+        ui.hint.textContent = "Next cow in the tube. Drag again.";
+      }
+    }
+
+    this.birdsBodies.forEach((body) => {
+      if (body.popped) return;
+      body.vy -= 16 * dt;
+      body.x += body.vx * dt;
+      body.y += body.vy * dt;
+      const floor = body.r;
+      if (body.y < floor) {
+        body.y = floor;
+        if (Math.abs(body.vy) > 3.4 && body.kind === "pig") this.popBirdsPig(body, 4000);
+        body.vy *= -0.22;
+        body.vx *= 0.8;
+      }
+      body.mesh.position.set(body.x, body.y, 0);
+      body.mesh.rotation.z -= body.vx * dt * 0.4;
+    });
+
+    for (let i = 0; i < this.birdsBodies.length; i += 1) {
+      for (let j = i + 1; j < this.birdsBodies.length; j += 1) {
+        this.bounceBirds(this.birdsBodies[i], this.birdsBodies[j]);
+      }
+    }
+  }
+
+  resolveBirdsCollisions(bird) {
+    this.birdsBodies.forEach((body) => {
+      if (body.popped) return;
+      const hit = this.bounceBirds(bird, body, true);
+      if (!hit) return;
+      const impact = Math.hypot(bird.vx - body.vx, bird.vy - body.vy);
+      if (body.kind === "pig" && impact > 2.4) this.popBirdsPig(body, 12000);
+      if (body.kind === "crate" && !body.scored && impact > 2) {
+        body.scored = true;
+        this.addBirdsScore(1800);
+      }
+    });
+  }
+
+  bounceBirds(a, b, fromBird = false) {
+    if (a.popped || b.popped) return false;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy) || 0.0001;
+    const min = a.r + b.r;
+    if (dist >= min) return false;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const overlap = min - dist;
+    const push = overlap / ((1 / a.mass) + (1 / b.mass));
+    a.x -= nx * push / a.mass;
+    a.y -= ny * push / a.mass;
+    if (!fromBird || b.kind) {
+      b.x += nx * push / b.mass;
+      b.y += ny * push / b.mass;
+    }
+    const rvx = b.vx - a.vx;
+    const rvy = b.vy - a.vy;
+    const velN = rvx * nx + rvy * ny;
+    if (velN > 0) return true;
+    const j = -(1.15) * velN / (1 / a.mass + 1 / b.mass);
+    a.vx -= (j / a.mass) * nx;
+    a.vy -= (j / a.mass) * ny;
+    b.vx += (j / b.mass) * nx;
+    b.vy += (j / b.mass) * ny;
+    return true;
+  }
+
+  popBirdsPig(pig, points) {
+    if (pig.popped) return;
+    pig.popped = true;
+    pig.mesh.visible = false;
+    this.addBirdsScore(points);
+    this.sfx.kick();
+    for (let i = 0; i < 5; i += 1) {
+      const bit = new THREE.Mesh(
+        new THREE.SphereGeometry(0.07, 6, 5),
+        new THREE.MeshStandardMaterial({ color: 0x7dce3a, roughness: 0.5 })
+      );
+      bit.position.set(pig.x, pig.y, 0);
+      bit.userData.v = new THREE.Vector3((Math.random() - 0.5) * 5, 2 + Math.random() * 3, (Math.random() - 0.5) * 2);
+      bit.userData.spin = new THREE.Vector3(0, 4, 2);
+      bit.userData.life = 0.8;
+      bit.userData.puff = false;
+      this.scene.add(bit);
+      this.debris.push(bit);
+    }
+  }
+
+  clearBirdsLevel() {
+    if (this.birdsLevel) this.scene.remove(this.birdsLevel);
+    this.birdsLevel = null;
+    this.birdsBodies = [];
+    this.slingBand = null;
+    this.birdShot = null;
+  }
+
+  endAngryCow() {
+    if (!this.birdsMode) return;
+    const coins = Math.floor(this.birdsScore / 10000);
+    this.state.money += coins;
+    save(this.state);
+    this.displayMoney = this.state.money;
+    this.refreshHud(true);
+    this.clearBirdsLevel();
+    this.birdsMode = false;
+    this.birdsAiming = false;
+    this.birdsFlying = false;
+    this.blocked = this.hatesYou;
+    this.trampoline.visible = !this.hatesYou;
+    this.shadowBlob.visible = true;
+    this.cowRig.position.set(0, 0.64, 0);
+    this.cowRig.rotation.set(0, 0, 0);
+    this.cowRig.scale.set(1, 1, 1);
+    if (this.cow) this.cow.rotation.set(0, Math.PI * 0.2, 0);
+    this.camera.position.set(4.2, 2.55, 5.5);
+    ui.birdsHud.hidden = true;
+    $("charge-wrap").hidden = false;
+    ui.hint.textContent = coins
+      ? `Broadcast over. ${coins} ceremonial coin${coins === 1 ? "" : "s"} awarded.`
+      : "Broadcast over. Not enough points for even one coin.";
+    this.say(coins
+      ? `${this.birdsScore.toLocaleString("en-US")} points becomes ${formatMoney(coins)}. You still cannot spend it.`
+      : `${this.birdsScore.toLocaleString("en-US")} points. Need 10,000 for $1.`);
+  }
+
   updatePhysics(dt) {
     if (!this.cow) return;
 
@@ -1705,6 +2099,11 @@ class Game {
       } else {
         this.flipGroup.rotation.z = this.barrelAngle;
       }
+    }
+
+    if (this.birdsMode) {
+      this.updateAngryCow(dt);
+      return;
     }
 
     if (this.hatesYou) {
