@@ -689,6 +689,7 @@ class Game {
     this.birdsPull = new THREE.Vector2(0, 0);
     this.birdsWait = 0;
     this.slingBand = null;
+    this.aimArc = null;
   }
 
   async start() {
@@ -1804,6 +1805,17 @@ class Game {
     this.slingBand = new THREE.Line(bandGeo, new THREE.LineBasicMaterial({ color: 0x5c2e0e, linewidth: 2 }));
     level.add(this.slingBand);
 
+    this.aimArc = new THREE.Group();
+    for (let i = 0; i < 9; i += 1) {
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.07 - i * 0.004, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xfff6e0, transparent: true, opacity: 0.95 - i * 0.07 })
+      );
+      dot.visible = false;
+      this.aimArc.add(dot);
+    }
+    level.add(this.aimArc);
+
     this.birdsLevel = level;
     this.scene.add(level);
     this.birdsBodies = [];
@@ -1855,6 +1867,7 @@ class Game {
     this.cowRig.scale.set(1, 1, 1);
     if (this.cow) this.cow.rotation.set(0, Math.PI * 0.15, 0);
     this.updateSlingBand(-7.2, 1.35);
+    this.hideAimArc();
   }
 
   updateSlingBand(x, y) {
@@ -1862,6 +1875,31 @@ class Game {
     const pos = this.slingBand.geometry.attributes.position;
     pos.setXYZ(1, x, y, 0);
     pos.needsUpdate = true;
+  }
+
+  updateAimArc(x0, y0) {
+    if (!this.aimArc) return;
+    const vx = -this.birdsPull.x * 5.4;
+    const vy = -this.birdsPull.y * 5.4;
+    const g = 16;
+    this.aimArc.children.forEach((dot, i) => {
+      const t = (i + 1) * 0.08;
+      const x = x0 + vx * t;
+      const y = y0 + vy * t - 0.5 * g * t * t;
+      if (y < 0.38) {
+        dot.visible = false;
+        return;
+      }
+      dot.visible = true;
+      dot.position.set(x, y, 0.15);
+    });
+  }
+
+  hideAimArc() {
+    if (!this.aimArc) return;
+    this.aimArc.children.forEach((dot) => {
+      dot.visible = false;
+    });
   }
 
   pointerToBirdsPlane(event) {
@@ -1894,6 +1932,7 @@ class Game {
     const y = 1.35 + this.birdsPull.y;
     this.cowRig.position.set(x, y, 0);
     this.updateSlingBand(x, y);
+    this.updateAimArc(x, y);
   }
 
   releaseBirdsAim() {
@@ -1921,6 +1960,7 @@ class Game {
     this.sfx.moo();
     this.refreshBirdsHud();
     this.updateSlingBand(-7.2, 1.35);
+    this.hideAimArc();
   }
 
   addBirdsScore(n) {
@@ -2055,6 +2095,7 @@ class Game {
     this.birdsLevel = null;
     this.birdsBodies = [];
     this.slingBand = null;
+    this.aimArc = null;
     this.birdShot = null;
   }
 
