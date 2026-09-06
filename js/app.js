@@ -75,6 +75,10 @@ function save(state) {
   }));
 }
 
+function wipeSave() {
+  localStorage.removeItem(SAVE_KEY);
+}
+
 function formatMoney(n) {
   return `$${Math.floor(n).toLocaleString("en-US")}`;
 }
@@ -196,6 +200,13 @@ function createSfx() {
     griddyBeat() {
       beep(196, 0.05, "square", 0.03);
       setTimeout(() => beep(247, 0.05, "square", 0.025), 80);
+    },
+    sizzle() {
+      beep(40 + Math.random() * 30, 0.06, "sawtooth", 0.03);
+    },
+    chomp() {
+      beep(70, 0.08, "square", 0.07);
+      setTimeout(() => beep(50, 0.12, "triangle", 0.05), 70);
     },
   };
 }
@@ -659,6 +670,11 @@ class Game {
     this.fruitBits = [];
     this.barrelRolling = false;
     this.barrelAngle = 0;
+    this.holdTime = 0;
+    this.hatesYou = false;
+    this.hatePhase = "idle";
+    this.hateTime = 0;
+    this.hateLight = null;
   }
 
   async start() {
@@ -753,7 +769,7 @@ class Game {
     const down = (event) => {
       if (this.stopGriddyIfActive()) return;
       if (event.target.closest("button") || event.target.closest(".overlay")) return;
-      if (this.blocked || this.airborne || this.fruitMode) return;
+      if (this.blocked || this.airborne || this.fruitMode || this.hatesYou) return;
       event.preventDefault();
       this.charging = true;
     };
@@ -805,7 +821,7 @@ class Game {
       }
       if (event.code !== "Space" && key !== " ") return;
       event.preventDefault();
-      if (event.repeat || this.blocked || this.exploding || this.farting || this.fruitMode) return;
+      if (event.repeat || this.blocked || this.exploding || this.farting || this.fruitMode || this.hatesYou) return;
       if (this.airborne) {
         this.airTap();
         return;
@@ -820,10 +836,12 @@ class Game {
   }
 
   launch() {
-    if (this.blocked || this.airborne) {
+    if (this.blocked || this.airborne || this.hatesYou) {
       this.charging = false;
       return;
     }
+    this.holdTime = 0;
+    this.tintCowHeat(0);
     const power = 0.28 + this.charge * 0.72;
     this.velocity = 6.2 + power * 9.4;
     this.airborne = true;
@@ -859,7 +877,7 @@ class Game {
   }
 
   barrelRoll() {
-    if (this.blocked || this.exploding || this.barrelRolling) return;
+    if (this.blocked || this.exploding || this.barrelRolling || this.hatesYou) return;
     this.barrelRolling = true;
     this.barrelAngle = 0;
     this.sfx.flip();
@@ -937,6 +955,150 @@ class Game {
     this.respawnTimer = 1.9;
   }
 
+  tintCowHeat(amount) {
+    if (!this.cow) return;
+    const heat = new THREE.Color(0xff4300);
+    this.cow.traverse((child) => {
+      if (!child.isMesh) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((mat) => {
+        if (!mat || !mat.color) return;
+        if (!mat.userData.baseColor) mat.userData.baseColor = mat.color.clone();
+        mat.color.copy(mat.userData.baseColor).lerp(heat, amount);
+        if (mat.emissive) mat.emissive.setRGB(amount * 1.15, amount * 0.18, 0);
+      });
+    });
+  }
+
+  tintCowSoot() {
+    if (!this.cow) return;
+    const soot = new THREE.Color(0x1b0d08);
+    this.cow.traverse((child) => {
+      if (!child.isMesh) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((mat) => {
+        if (!mat || !mat.color) return;
+        if (!mat.userData.baseColor) mat.userData.baseColor = mat.color.clone();
+        mat.color.copy(mat.userData.baseColor).lerp(soot, 0.72);
+        if (mat.emissive) mat.emissive.setRGB(0.18, 0.03, 0);
+      });
+    });
+  }
+
+  spawnHeatPuff() {
+    const flame = new THREE.Mesh(
+      new THREE.ConeGeometry(0.1 + Math.random() * 0.08, 0.22 + Math.random() * 0.16, 5),
+      new THREE.MeshStandardMaterial({
+        color: Math.random() > 0.4 ? 0xff6a00 : 0xffd36a,
+        emissive: 0xff4a00,
+        transparent: true,
+        opacity: 0.85,
+        roughness: 1,
+      })
+    );
+    flame.position.set((Math.random() - 0.5) * 0.7, 0.9 + this.height, (Math.random() - 0.5) * 0.5);
+    flame.userData.v = new THREE.Vector3((Math.random() - 0.5) * 0.4, 1.6 + Math.random(), (Math.random() - 0.5) * 0.4);
+    flame.userData.spin = new THREE.Vector3(0, 3, 0);
+    flame.userData.life = 0.55;
+    flame.userData.puff = true;
+    this.scene.add(flame);
+    this.debris.push(flame);
+  }
+
+  combustFromHold() {
+    if (this.hatesYou) return;
+    const lost = this.state.money;
+    this.hatesYou = true;
+    this.hatePhase = "combust";
+    this.hateTime = 0;
+    this.charging = false;
+    this.charge = 0;
+    this.holdTime = 0;
+    this.blocked = true;
+    this.airborne = false;
+    this.flipping = false;
+    this.fruitMode = false;
+    this.farting = false;
+    this.respawnTimer = 0;
+    this.shake = 0.6;
+    wipeSave();
+    this.state = { money: 0, jumps: 0, attempts: 0 };
+    this.displayMoney = 0;
+    this.sfx.explode();
+    this.sfx.moo();
+    this.tintCowHeat(1);
+    this.spawnDebris(1.1);
+    if (!this.hateLight) {
+      this.hateLight = new THREE.PointLight(0xff5a00, 4.5, 8);
+      this.cowRig.add(this.hateLight);
+      this.hateLight.position.set(0, 0.8, 0.3);
+    }
+    this.refreshHud();
+    ui.moneyBtn.classList.add("bust");
+    ui.combo.hidden = false;
+    ui.combo.classList.add("hate");
+    ui.combo.textContent = "COMBUSTED";
+    ui.payout.hidden = false;
+    ui.payout.classList.add("dead");
+    ui.payout.textContent = lost > 0 ? `${formatMoney(lost)} gone forever` : "and she still hates you";
+    this.flashTimer = 99;
+    this.say("Unused bounce energy ignited her. She will not forgive this.");
+    ui.hint.textContent = "She is very, very angry.";
+  }
+
+  updateHate(dt) {
+    this.hateTime += dt;
+    if (this.hateLight) {
+      this.hateLight.intensity = this.hatePhase === "glare"
+        ? 0.8 + Math.sin(this.hateTime * 5) * 0.25
+        : 3.8 + Math.sin(this.hateTime * 18) * 1.2;
+    }
+
+    if (this.hatePhase === "combust") {
+      if (Math.random() < 0.45) this.spawnHeatPuff();
+      this.cowRig.rotation.z = Math.sin(this.hateTime * 28) * 0.12;
+      this.cowRig.position.y = 0.64 + Math.sin(this.hateTime * 20) * 0.06;
+      if (this.hateTime > 1.25) {
+        this.hatePhase = "eat";
+        this.hateTime = 0;
+        this.tintCowSoot();
+        ui.combo.textContent = "SHE HATES YOU";
+        ui.payout.textContent = "the trampoline looks tasty";
+        this.say("She has decided the trampoline was the problem. And you.");
+      }
+      return;
+    }
+
+    if (this.hatePhase === "eat") {
+      const chomp = Math.sin(this.hateTime * 11);
+      this.cowRig.rotation.x = 0.32 + Math.max(0, chomp) * 0.28;
+      this.cowRig.position.y = 0.5 + Math.max(0, -chomp) * 0.12;
+      const shrink = Math.max(0.01, 1 - this.hateTime / 2.1);
+      this.trampoline.scale.setScalar(shrink);
+      this.trampoline.position.y = -0.15 * (1 - shrink);
+      if (this.hateTime > 0.15 && Math.floor(this.hateTime * 3) !== Math.floor((this.hateTime - dt) * 3)) {
+        this.sfx.chomp();
+      }
+      if (this.hateTime > 2.15) {
+        this.trampoline.visible = false;
+        this.hatePhase = "glare";
+        this.hateTime = 0;
+        ui.combo.textContent = "NO TRAMPOLINE";
+        ui.payout.textContent = "refresh = lose everything";
+        ui.hint.textContent = "She ate it. Refresh the page to start over with nothing.";
+        this.say("The game is over until you refresh. Your fortune is already gone.");
+      }
+      return;
+    }
+
+    this.cowRig.position.set(0, 0.58 + Math.sin(this.hateTime * 1.4) * 0.03, 0);
+    this.cowRig.rotation.x = 0.08;
+    this.cowRig.rotation.y = Math.sin(this.hateTime * 0.7) * 0.2;
+    this.cowRig.rotation.z = 0;
+    this.cow.rotation.y = 0.35;
+    this.squash = 1;
+  }
+
   respawn() {
     this.clearDebris();
     this.farting = false;
@@ -955,7 +1117,7 @@ class Game {
     this.airborne = false;
     this.squash = 1;
     this.exploding = false;
-    this.blocked = false;
+    this.blocked = this.hatesYou;
     this.displayMoney = this.state.money;
     this.restoreSky();
     ui.moneyBtn.classList.remove("bust");
@@ -969,7 +1131,7 @@ class Game {
   }
 
   fartLaunch() {
-    if (!this.ready || this.blocked || this.exploding || this.farting) return;
+    if (!this.ready || this.blocked || this.exploding || this.farting || this.hatesYou) return;
     this.charging = false;
     this.charge = 0;
     this.flipping = false;
@@ -1052,7 +1214,7 @@ class Game {
   }
 
   summonWhale() {
-    if (!this.ready || this.whale) return;
+    if (!this.ready || this.whale || this.hatesYou) return;
     this.whale = buildWhale();
     this.whale.scale.setScalar(1.45);
     this.whale.position.set(-8.5, 4.6, -1.2);
@@ -1135,7 +1297,7 @@ class Game {
   }
 
   startFruitFury() {
-    if (!this.ready || this.blocked || this.exploding || this.farting || this.fruitMode) return;
+    if (!this.ready || this.blocked || this.exploding || this.farting || this.fruitMode || this.hatesYou) return;
     this.charging = false;
     this.charge = 0;
     this.airborne = false;
@@ -1479,7 +1641,7 @@ class Game {
 
   closeShop() {
     ui.shop.hidden = true;
-    if (this.ready) this.blocked = false;
+    if (this.ready && !this.hatesYou) this.blocked = false;
   }
 
   refreshHud(pop = false) {
@@ -1545,13 +1707,46 @@ class Game {
       }
     }
 
+    if (this.hatesYou) {
+      this.updateHate(dt);
+      return;
+    }
+
     if (this.charging && !this.airborne) {
       this.charge = Math.min(1, this.charge + dt * 0.85);
       this.chargeMemory = this.charge;
+      this.holdTime += dt;
       this.squash = 1 - this.charge * 0.28;
       this.trampoline.userData.bed.scale.y = 1 - this.charge * 0.55;
+      const heat = Math.max(0, (this.holdTime - 1.6) / 3.4);
+      this.tintCowHeat(Math.min(1, heat));
+      if (this.holdTime > 1.8 && this.holdTime < 1.85) {
+        ui.hint.textContent = "That is a lot of unused energy.";
+      }
+      if (this.holdTime > 3.2 && this.holdTime < 3.25) {
+        ui.combo.hidden = false;
+        ui.combo.classList.add("hate");
+        ui.combo.textContent = "TOO HOT";
+        ui.payout.hidden = false;
+        ui.payout.textContent = "let go";
+        ui.hint.textContent = "She is cooking in place. Release.";
+        this.flashTimer = 4;
+      }
+      if (this.holdTime > 2.4 && Math.random() < 0.35) {
+        this.spawnHeatPuff();
+        this.sfx.sizzle();
+      }
       if (Math.random() < 0.2) this.sfx.charge(this.charge);
+      if (this.holdTime >= 5) {
+        this.combustFromHold();
+        return;
+      }
     } else if (!this.airborne) {
+      if (this.holdTime > 0) {
+        this.holdTime = 0;
+        this.tintCowHeat(0);
+        ui.combo.classList.remove("hate");
+      }
       this.squash += (1 - this.squash) * 8 * dt;
       this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 8 * dt;
     }
@@ -1647,7 +1842,7 @@ class Game {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) ui.toast.hidden = true;
     }
-    if (this.flashTimer > 0 && !this.fruitMode) {
+    if (this.flashTimer > 0 && !this.fruitMode && !this.hatesYou) {
       this.flashTimer -= dt;
       if (this.flashTimer <= 0) {
         ui.combo.hidden = true;

@@ -189,6 +189,11 @@ button:focus {
   animation: griddy-pulse 0.42s ease-in-out infinite;
 }
 
+.combo.hate {
+  color: #ff4a1a;
+  text-shadow: 0 4px 0 #5a1000, 0 0 18px rgba(255, 60, 0, 0.7);
+}
+
 .payout.dead {
   color: #ff8b8b;
 }
