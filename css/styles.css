@@ -173,6 +173,15 @@ button:focus {
   letter-spacing: 0.04em;
 }
 
+.combo.fart {
+  color: #c6e34a;
+  text-shadow: 0 4px 0 #3d5a10, 0 0 18px rgba(198, 227, 74, 0.6);
+}
+
+.payout.dead {
+  color: #ff8b8b;
+}
+
 .payout {
   top: 32%;
   color: var(--gold);

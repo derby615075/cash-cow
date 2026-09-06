@@ -144,6 +144,31 @@ function createSfx() {
       setTimeout(() => beep(48, 0.35, "triangle", 0.05), 90);
       setTimeout(() => beep(110, 0.12, "square", 0.03), 180);
     },
+    fart() {
+      const audio = ensure();
+      const osc = audio.createOscillator();
+      const filter = audio.createBiquadFilter();
+      const amp = audio.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(96, audio.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(36, audio.currentTime + 0.38);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(380, audio.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(90, audio.currentTime + 0.38);
+      amp.gain.setValueAtTime(0.1, audio.currentTime);
+      amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.42);
+      osc.connect(filter);
+      filter.connect(amp);
+      amp.connect(audio.destination);
+      osc.start();
+      osc.stop(audio.currentTime + 0.44);
+      setTimeout(() => beep(52, 0.14, "triangle", 0.045), 260);
+    },
+    spacePop() {
+      beep(880, 0.08, "square", 0.04);
+      setTimeout(() => beep(220, 0.2, "sine", 0.05), 70);
+      setTimeout(() => beep(90, 0.35, "triangle", 0.04), 160);
+    },
   };
 }
 
@@ -386,6 +411,18 @@ function buildWorld(scene) {
   }
 }
 
+function buildStars() {
+  const stars = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  for (let i = 0; i < 48; i += 1) {
+    const star = new THREE.Mesh(new THREE.SphereGeometry(0.05 + Math.random() * 0.04, 6, 6), mat);
+    star.position.set((Math.random() - 0.5) * 36, 18 + Math.random() * 50, (Math.random() - 0.5) * 36);
+    stars.add(star);
+  }
+  stars.visible = false;
+  return stars;
+}
+
 class Game {
   constructor() {
     this.state = loadSave();
@@ -414,6 +451,10 @@ class Game {
     this.shake = 0;
     this.debris = [];
     this.flipMid = 0.7;
+    this.farting = false;
+    this.fartTime = 0;
+    this.fartEmit = 0;
+    this.spaceDeath = false;
   }
 
   async start() {
@@ -446,8 +487,10 @@ class Game {
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.Fog(0x8fd3ea, 18, 48);
 
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 80);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 220);
     this.camera.position.set(4.2, 2.55, 5.5);
+    this.skyColor = new THREE.Color(0x8fd3ea);
+    this.spaceColor = new THREE.Color(0x06101f);
 
     const hemi = new THREE.HemisphereLight(0xc8e9ff, 0x4d7a30, 1.1);
     this.scene.add(hemi);
@@ -462,6 +505,8 @@ class Game {
     this.scene.add(sun);
 
     buildWorld(this.scene);
+    this.stars = buildStars();
+    this.scene.add(this.stars);
     this.trampoline = buildTrampoline();
     this.scene.add(this.trampoline);
 
@@ -524,9 +569,14 @@ class Game {
     window.addEventListener("keydown", (event) => {
       if (event.code === "Escape") this.closeShop();
       if (event.code === "KeyS") this.openShop();
+      if (event.code === "KeyG") {
+        event.preventDefault();
+        if (!event.repeat) this.fartLaunch();
+        return;
+      }
       if (event.code !== "Space") return;
       event.preventDefault();
-      if (event.repeat || this.blocked || this.exploding) return;
+      if (event.repeat || this.blocked || this.exploding || this.farting) return;
       if (this.airborne) {
         this.airTap();
         return;
@@ -557,7 +607,7 @@ class Game {
     if (this.flipGroup) this.flipGroup.rotation.x = 0;
     this.sfx.launch();
     if (Math.random() < 0.28) this.sfx.moo();
-    ui.hint.textContent = "Space twice in the air for a backflip.";
+    ui.hint.textContent = "Space twice to flip. G to fart into space.";
   }
 
   airTap() {
@@ -610,7 +660,7 @@ class Game {
     this.refreshHud(true);
     ui.hint.textContent = stuckTheFlip
       ? "Feet first. Hold again, if you dare."
-      : "Hold to squash. Space twice in the air for a backflip.";
+      : "Hold to squash. G to fart into space.";
   }
 
   explode() {
@@ -650,20 +700,114 @@ class Game {
 
   respawn() {
     this.clearDebris();
+    this.farting = false;
+    this.fartTime = 0;
+    this.spaceDeath = false;
     this.cow.visible = true;
     this.shadowBlob.visible = true;
+    this.cowRig.rotation.set(0, 0, 0);
+    this.cowRig.scale.set(1, 1, 1);
     this.flipAngle = 0;
     if (this.flipGroup) this.flipGroup.rotation.set(0, 0, 0);
+    this.height = 0;
+    this.velocity = 0;
+    this.airborne = false;
     this.squash = 1;
     this.exploding = false;
     this.blocked = false;
-    this.displayMoney = 0;
+    this.displayMoney = this.state.money;
+    this.restoreSky();
     ui.moneyBtn.classList.remove("bust");
     ui.combo.classList.remove("casual");
+    ui.combo.classList.remove("fart");
     ui.combo.hidden = true;
     ui.payout.hidden = true;
-    ui.hint.textContent = "Hold to squash. Maybe stick the landing this time.";
+    ui.payout.classList.remove("dead");
+    ui.hint.textContent = "She's back. Hold to squash. G if you have learned nothing.";
     this.refreshHud();
+  }
+
+  fartLaunch() {
+    if (!this.ready || this.blocked || this.exploding || this.farting) return;
+    this.charging = false;
+    this.charge = 0;
+    this.flipping = false;
+    this.airTaps = 0;
+    this.farting = true;
+    this.fartTime = 0;
+    this.fartEmit = 0;
+    this.airborne = true;
+    this.velocity = 16;
+    this.squash = 1.4;
+    this.shake = 0.35;
+    this.sfx.fart();
+    this.sfx.moo();
+    this.spawnFartCloud(true);
+    ui.combo.hidden = false;
+    ui.combo.classList.add("fart");
+    ui.combo.textContent = "PFFT";
+    ui.payout.hidden = false;
+    ui.payout.textContent = "TO SPACE";
+    this.flashTimer = 9;
+    ui.hint.textContent = "Propulsion achieved.";
+    this.say("The cow has chosen violence against gravity.");
+  }
+
+  spawnFartCloud(big = false) {
+    const green = new THREE.MeshStandardMaterial({
+      color: big ? 0xc6e34a : 0x8fbf3a,
+      transparent: true,
+      opacity: big ? 0.7 : 0.45,
+      roughness: 1,
+    });
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(big ? 0.38 : 0.16 + Math.random() * 0.12, 8, 8), green);
+    puff.position.set(-0.55 + (Math.random() - 0.5) * 0.2, 0.7 + this.height, (Math.random() - 0.5) * 0.25);
+    puff.userData.v = new THREE.Vector3(-1.2 - Math.random(), 0.4 + Math.random(), (Math.random() - 0.5) * 0.8);
+    puff.userData.spin = new THREE.Vector3(0, 2, 0);
+    puff.userData.life = big ? 1.1 : 0.7;
+    puff.userData.puff = true;
+    this.scene.add(puff);
+    this.debris.push(puff);
+  }
+
+  tintSky(amount) {
+    const color = this.skyColor.clone().lerp(this.spaceColor, amount);
+    this.renderer.setClearColor(color);
+    this.scene.fog.color.copy(color);
+    this.scene.fog.near = 18 - amount * 10;
+    this.scene.fog.far = 48 + amount * 80;
+    if (this.stars) this.stars.visible = amount > 0.28;
+  }
+
+  restoreSky() {
+    this.renderer.setClearColor(this.skyColor);
+    this.scene.fog.color.copy(this.skyColor);
+    this.scene.fog.near = 18;
+    this.scene.fog.far = 48;
+    if (this.stars) this.stars.visible = false;
+    this.camera.position.set(4.2, 2.55, 5.5);
+  }
+
+  dieInSpace() {
+    this.farting = false;
+    this.exploding = true;
+    this.blocked = true;
+    this.airborne = false;
+    this.velocity = 0;
+    this.cow.visible = false;
+    this.shadowBlob.visible = false;
+    this.spaceDeath = true;
+    this.sfx.spacePop();
+    this.spawnDebris(0.64 + this.height);
+    ui.combo.classList.remove("fart");
+    ui.combo.classList.add("casual");
+    ui.combo.textContent = "SHE DIED";
+    ui.payout.classList.add("dead");
+    ui.payout.textContent = "in space";
+    this.flashTimer = 2.4;
+    this.say("Cause of death: a comic fart. The money is unharmed, and still useless.");
+    ui.hint.textContent = "A tiny cow-shaped silence.";
+    this.respawnTimer = 2.3;
   }
 
   burstCoins(count) {
@@ -694,10 +838,10 @@ class Game {
     this.flashTimer = 1.1;
   }
 
-  spawnDebris() {
+  spawnDebris(originY = 0.9) {
     this.clearDebris();
     const colors = [0xf4e1c1, 0x6a3a1c, 0x2b2b2b, 0xe59aa3, 0xf7f1e3, 0xf3c43a];
-    const origin = new THREE.Vector3(0, 0.9, 0);
+    const origin = new THREE.Vector3(0, originY, 0);
     for (let i = 0; i < 18; i += 1) {
       const chunk = new THREE.Mesh(
         new THREE.BoxGeometry(0.12 + Math.random() * 0.2, 0.1 + Math.random() * 0.16, 0.1 + Math.random() * 0.16),
@@ -856,9 +1000,16 @@ class Game {
     const shakeX = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.35 : 0;
     const shakeY = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.2 : 0;
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt);
-    this.camera.position.x = 4.2 + shakeX;
-    this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.55 + this.height * 0.2, 0.08) + shakeY;
-    this.camera.lookAt(0, 1.05 + this.height * 0.28, 0);
+    if (this.farting || this.spaceDeath) {
+      this.camera.position.x = 4.2 + shakeX;
+      this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.4 + Math.min(this.height * 0.22, 18), 0.12) + shakeY;
+      this.camera.lookAt(0, 0.8 + this.height, 0);
+      if (this.spaceDeath) this.tintSky(1);
+    } else {
+      this.camera.position.x = 4.2 + shakeX;
+      this.camera.position.y = THREE.MathUtils.lerp(this.camera.position.y, 2.55 + this.height * 0.2, 0.08) + shakeY;
+      this.camera.lookAt(0, 1.05 + this.height * 0.28, 0);
+    }
     (this.scene.userData.clouds || []).forEach((cloud) => {
       cloud.position.x += cloud.userData.drift * dt;
       if (cloud.position.x > 16) cloud.position.x = -16;
@@ -884,6 +1035,30 @@ class Game {
     if (this.exploding) {
       this.squash += (1 - this.squash) * 4 * dt;
       this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 4 * dt;
+      return;
+    }
+
+    if (this.farting) {
+      this.fartTime += dt;
+      this.fartEmit += dt;
+      this.velocity += 26 * dt;
+      this.height += this.velocity * dt;
+      this.squash = 1.25 + Math.sin(this.fartTime * 20) * 0.08;
+      this.cowRig.rotation.z += 7.5 * dt;
+      this.cowRig.rotation.x += 1.8 * dt;
+      this.trampoline.userData.bed.scale.y += (1 - this.trampoline.userData.bed.scale.y) * 4 * dt;
+      if (this.fartEmit > 0.05) {
+        this.fartEmit = 0;
+        this.spawnFartCloud(false);
+      }
+      this.tintSky(Math.min(1, this.fartTime / 1.6));
+      if (this.fartTime > 0.35 && this.fartTime < 0.5) ui.combo.textContent = "WHOOSH";
+      if (this.height > 55 || this.fartTime > 2.6) this.dieInSpace();
+      this.cowRig.position.y = 0.64 + Math.max(0, this.height);
+      this.cowRig.scale.set(0.75, this.squash, 0.75);
+      const shadowScale = Math.max(0.08, 1 - this.height * 0.08);
+      this.shadowBlob.scale.setScalar(shadowScale);
+      this.shadowBlob.material.opacity = 0.2 * shadowScale;
       return;
     }
 
