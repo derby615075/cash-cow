@@ -371,6 +371,20 @@ h2 {
   font-size: 13px;
 }
 
+.file-warning {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  background: #ffe1c2;
+  border: 3px solid var(--red);
+  border-radius: 14px;
+  color: var(--wood-deep);
+  font-weight: 800;
+}
+
+.file-warning a {
+  color: var(--wood);
+}
+
 .loader p {
   margin: 0 0 14px;
   font-family: "Fredoka", sans-serif;

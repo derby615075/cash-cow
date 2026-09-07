@@ -58,6 +58,10 @@
         <p class="tagline">A cow. A trampoline. Money you can do nothing with. Fruit may be kicked. The griddy is forever.</p>
         <button id="start-btn" class="wood-btn big" type="button">Start bouncing</button>
         <p class="fineprint">Featuring the low-poly cow from <code>38-lp_cow</code>.</p>
+        <p id="file-warning" class="file-warning" hidden>
+          The page opened as a file, so the game scripts cannot start.
+          Double-click <code>play.bat</code> instead of opening <code>index.html</code> directly.
+        </p>
       </div>
     </div>
 
@@ -98,5 +102,17 @@
   </div>
 
   <script type="module" src="js/app.js"></script>
+  <script>
+    if (location.protocol === "file:") {
+      const warning = document.getElementById("file-warning");
+      if (warning) warning.hidden = false;
+    }
+    document.getElementById("start-btn")?.addEventListener("click", () => {
+      if (window.CASH_COW_OK) return;
+      const warning = document.getElementById("file-warning");
+      if (warning) warning.hidden = false;
+      alert("This game needs a web server. Double-click play.bat instead of opening index.html directly.");
+    });
+  </script>
 </body>
 </html>

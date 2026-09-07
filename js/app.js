@@ -2307,3 +2307,4 @@ ui.closeShop.addEventListener("click", () => game.closeShop());
 ui.moneyBtn.addEventListener("click", () => game.doNothing());
 ui.useMoneyBtn.addEventListener("click", () => game.doNothing());
 $("whale-btn").addEventListener("click", () => game.summonWhale());
+window.CASH_COW_OK = true;
